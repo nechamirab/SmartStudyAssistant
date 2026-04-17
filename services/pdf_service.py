@@ -1,0 +1,1 @@
+# Handles PDF text extraction
