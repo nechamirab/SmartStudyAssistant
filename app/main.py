@@ -2,6 +2,7 @@ from core.config import CHUNK_OVERLAP, CHUNK_SIZE
 from services.chunk_service import ChunkService
 from services.embedding_service import EmbeddingService
 from services.pdf_service import PdfService
+from services.vector_store_service import VectorStoreService
 
 
 def main():
@@ -33,6 +34,22 @@ def main():
         print(f"Page: {chunk.page_number}")
         print(f"Text preview: {chunk.text[:120]}")
         print(f"Embedding dimension: {len(embedding.vector)}")
+
+    vector_store = VectorStoreService()
+    vector_store.add(chunks, embeddings)
+
+    query = "What is a sequential game?"
+    query_vector = embedding_service.embed_query(query)
+
+    results = vector_store.search(query_vector, top_k=3)
+
+    print("\n=== SEARCH RESULTS ===")
+
+    for res in results:
+        print("\n---")
+        print(f"Score: {res.score:.4f}")
+        print(f"Page: {res.chunk.page_number}")
+        print(res.chunk.text[:200])
 
 
 if __name__ == "__main__":
