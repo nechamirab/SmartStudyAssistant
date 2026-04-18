@@ -4,17 +4,15 @@ from services.embedding_service import EmbeddingService
 from services.pdf_service import PdfService
 from services.retrieval_service import RetrievalService
 from services.vector_store_service import VectorStoreService
+from services.qa_service import QAService
 
 
 def main():
     """
-    Run the document processing and retrieval pipeline:
-    1. Extract PDF pages
-    2. Split pages into chunks
-    3. Generate embeddings
-    4. Store vectors
-    5. Retrieve the most relevant chunks for a query
+    Run full pipeline:
+    PDF → chunks → embeddings → vector store → retrieval → QA
     """
+
     pdf_service = PdfService()
     chunk_service = ChunkService(
         chunk_size=CHUNK_SIZE,
@@ -34,21 +32,19 @@ def main():
         vector_store=vector_store,
     )
 
+    qa_service = QAService(retrieval_service)
+
     query = "What is a sequential game?"
-    retrieval_response = retrieval_service.retrieve(query, top_k=3)
+    qa_response = qa_service.answer(query)
 
     print(f"Pages extracted: {len(pages)}")
     print(f"Chunks created: {len(chunks)}")
     print(f"Embeddings created: {len(embeddings)}")
 
-    print("\n=== RETRIEVAL RESULTS ===")
-    print(f"Query: {retrieval_response.query}")
-
-    for result in retrieval_response.results:
-        print("\n---")
-        print(f"Score: {result.score:.4f}")
-        print(f"Page: {result.chunk.page_number}")
-        print(result.chunk.text[:200])
+    print("\n=== ANSWER ===")
+    print(f"Query: {qa_response.query}")
+    print("\nAnswer:")
+    print(qa_response.answer)
 
 
 if __name__ == "__main__":
