@@ -68,5 +68,112 @@
     "answer": "Cooperative games allow players to form binding agreements and coalitions, while non-cooperative games do not allow such agreements.",
     "page": 4,
     "source_text": "cooperative games binding agreements coalitions non-cooperative"
+  },
+  [
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is Artificial Intelligence?",
+    "answer": "Artificial Intelligence is a field of computer science focused on creating systems that can perform tasks requiring human intelligence.",
+    "page": 3,
+    "source_text": "Artificial Intelligence is a broad field in computer science that focuses on the creation of systems capable of performing tasks"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is Machine Learning?",
+    "answer": "Machine Learning is a subset of AI that enables systems to learn from data and make predictions without explicit programming.",
+    "page": 4,
+    "source_text": "Machine learning is a subset of AI that gives computers the ability to learn from data and make decisions"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What are the three main types of machine learning?",
+    "answer": "The three main types are supervised learning, unsupervised learning, and reinforcement learning.",
+    "page": 4,
+    "source_text": "There are three main types of ML, supervised learning, unsupervised learning, and reinforcement learning"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is supervised learning?",
+    "answer": "Supervised learning is a method where a model is trained on labeled data to learn the relationship between inputs and outputs.",
+    "page": 4,
+    "source_text": "Supervised learning involves training a model on a labeled dataset"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is unsupervised learning?",
+    "answer": "Unsupervised learning is a method where a model finds patterns in unlabeled data without predefined outputs.",
+    "page": 4,
+    "source_text": "Unsupervised learning involves training a model on an unlabeled dataset"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is reinforcement learning?",
+    "answer": "Reinforcement learning is a method where an agent learns by receiving rewards or penalties based on its actions.",
+    "page": 4,
+    "source_text": "Reinforcement learning involves training a model to make a series of decisions by rewarding or punishing"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is feature engineering?",
+    "answer": "Feature engineering is the process of selecting and transforming data to improve model performance.",
+    "page": 2,
+    "source_text": "Feature engineering involves selecting, transforming, and creating relevant features from raw data"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is model training?",
+    "answer": "Model training is the process of feeding data into a model to learn patterns and adjust parameters.",
+    "page": 2,
+    "source_text": "Model training is the process of feeding labeled data into an algorithm or model to learn patterns"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is model evaluation?",
+    "answer": "Model evaluation measures how well a model performs using metrics such as accuracy and precision.",
+    "page": 2,
+    "source_text": "Evaluating the performance of ML models is crucial to ensure their effectiveness"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is overfitting?",
+    "answer": "Overfitting occurs when a model performs well on training data but poorly on new unseen data.",
+    "page": 2,
+    "source_text": "Overfitting occurs when a model becomes overly complex and performs well on the training data but fails to generalize"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is generalization in machine learning?",
+    "answer": "Generalization is the ability of a model to perform well on unseen data.",
+    "page": 2,
+    "source_text": "Generalization refers to a model’s ability to perform well on unseen data"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "Why is data important in AI and ML?",
+    "answer": "Data is essential because it is used to train and evaluate models and determine their performance.",
+    "page": 2,
+    "source_text": "High-quality data is essential for AI and ML. It serves as the foundation for training and evaluating models"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is the role of algorithms in AI?",
+    "answer": "Algorithms are used to process data, train models, and make predictions or decisions.",
+    "page": 2,
+    "source_text": "Algorithms are mathematical and computational procedures used to solve specific problems"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is Natural Language Processing?",
+    "answer": "Natural Language Processing is a field that enables computers to understand and generate human language.",
+    "page": 10,
+    "source_text": "Natural Language Processing is a subfield of computer science, artificial intelligence, and computational linguistics"
+  },
+  {
+    "pdf": "40_algorithms.pdf",
+    "question": "What is computer vision?",
+    "answer": "Computer vision is a field of AI that enables systems to interpret and understand visual data such as images and videos.",
+    "page": 10,
+    "source_text": "Computer vision is a field of artificial intelligence that focuses on enabling computers to interpret and understand the visual world"
   }
+]
 ]
