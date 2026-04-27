@@ -37,8 +37,13 @@ def main():
 
     qa_service = QAService(retrieval_service)
 
-    query = "What is a sequential game?"
+    query = "What is the lecture about?"
     qa_response = qa_service.answer(query)
+
+    print("\n=== SOURCES ===")
+    for i, source in enumerate(qa_response.sources, start=1):
+        print(f"\n--- Source {i} ---")
+        print(source[:500])
 
     print(f"Pages extracted: {len(pages)}")
     print(f"Chunks created: {len(chunks)}")
