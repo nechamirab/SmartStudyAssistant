@@ -1,0 +1,72 @@
+[
+  {
+    "pdf": "example.pdf",
+    "question": "What is a sequential game?",
+    "answer": "A sequential game is a game where players move in turns and each player knows the moves of previous players.",
+    "page": 1,
+    "source_text": "sequential game where players move in turns"
+  },
+  {
+    "pdf": "example.pdf",
+    "question": "What is the definition of a Nash equilibrium?",
+    "answer": "A Nash equilibrium is a strategy profile where no player can improve their payoff by unilaterally changing their strategy.",
+    "page": 2,
+    "source_text": "Nash equilibrium no player can improve payoff by unilaterally changing strategy"
+  },
+  {
+    "pdf": "example.pdf",
+    "question": "What are the types of games based on information structure?",
+    "answer": "Games can be classified into perfect information games and imperfect information games based on what players know about previous moves.",
+    "page": 1,
+    "source_text": "perfect information imperfect information games"
+  },
+  {
+    "pdf": "example.pdf",
+    "question": "How is a game represented in normal form?",
+    "answer": "A game in normal form is represented as a matrix showing all players, their available strategies, and payoffs for each strategy combination.",
+    "page": 2,
+    "source_text": "normal form matrix players strategies payoffs"
+  },
+  {
+    "pdf": "example.pdf",
+    "question": "What is game theory?",
+    "answer": "Game theory is a mathematical framework for analyzing strategic interactions between rational decision-makers called players.",
+    "page": 1,
+    "source_text": "game theory mathematical framework strategic interactions rational players"
+  },
+  {
+    "pdf": "example.pdf",
+    "question": "What is the prisoner's dilemma?",
+    "answer": "The prisoner's dilemma is a game where mutual cooperation is better than mutual defection, but each player has individual incentive to defect.",
+    "page": 3,
+    "source_text": "prisoner dilemma cooperation defection incentive"
+  },
+  {
+    "pdf": "example.pdf",
+    "question": "What does backward induction achieve in sequential games?",
+    "answer": "Backward induction solves sequential games by working backwards from the end to find the subgame perfect Nash equilibrium.",
+    "page": 3,
+    "source_text": "backward induction sequential games subgame perfect Nash equilibrium"
+  },
+  {
+    "pdf": "example.pdf",
+    "question": "What is a pure strategy?",
+    "answer": "A pure strategy is a strategy where a player chooses a single action with certainty.",
+    "page": 2,
+    "source_text": "pure strategy single action certainty"
+  },
+  {
+    "pdf": "example.pdf",
+    "question": "What is a mixed strategy?",
+    "answer": "A mixed strategy is a probability distribution over available actions that a player uses to randomize their choice.",
+    "page": 2,
+    "source_text": "mixed strategy probability distribution randomize actions"
+  },
+  {
+    "pdf": "example.pdf",
+    "question": "What is the difference between cooperative and non-cooperative games?",
+    "answer": "Cooperative games allow players to form binding agreements and coalitions, while non-cooperative games do not allow such agreements.",
+    "page": 4,
+    "source_text": "cooperative games binding agreements coalitions non-cooperative"
+  }
+]
