@@ -31,7 +31,6 @@ from services.qa_service import QAService
 from services.evaluation_service import EvaluationService, AggregatedMetrics, EvaluationResult
 from services.baseline_retriever import RetrievalBaselines
 
-
 @dataclass
 class ExperimentConfig:
     """Configuration for a single experiment."""
@@ -303,6 +302,11 @@ class ExperimentRunner:
             )
             retrieved_chunks = [r.chunk.text for r in retrieval_response.results]
 
+        elif config.answer_mode == "llm":
+            qa_service = QAService(retrieval_service)
+            response = qa_service.answer(question)
+            answer = response.answer
+
         elif config.answer_mode == "baseline" and config.baseline_method:
             # Use baseline retrieval
             baseline_results = baselines.retrieve_all_baselines(
@@ -315,9 +319,15 @@ class ExperimentRunner:
         else:
             retrieved_chunks = []
 
-        # Step 2: Generate answer (currently naive concatenation)
-        if retrieved_chunks:
+        if config.answer_mode == "llm":
+            qa_service = QAService(retrieval_service)
+            qa_response = qa_service.answer(question)
+            generated_answer = qa_response.answer
+            retrieved_chunks = qa_response.sources
+
+        elif retrieved_chunks:
             generated_answer = "\n".join(retrieved_chunks)
+
         else:
             generated_answer = ""
 

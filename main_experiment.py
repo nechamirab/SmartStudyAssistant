@@ -58,6 +58,16 @@ def define_experiments() -> List[ExperimentConfig]:
             answer_mode="retrieved_chunks",
         ),
 
+        # ===== LLM ANSWER GENERATION =====
+        # Same retrieval settings as baseline, but answer is generated via QAService / LLM
+        ExperimentConfig(
+            chunk_size=500,
+            chunk_overlap=50,
+            top_k=3,
+            embedding_provider="mock",
+            answer_mode="llm",
+        ),
+
         # ===== CHUNK SIZE EXPERIMENTS =====
         # Small chunks: More focused retrieval
         ExperimentConfig(
