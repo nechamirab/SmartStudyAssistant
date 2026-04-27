@@ -5,7 +5,7 @@ from services.pdf_service import PdfService
 from services.retrieval_service import RetrievalService
 from services.vector_store_service import VectorStoreService
 from services.qa_service import QAService
-
+from pathlib import Path
 
 def main():
     """
@@ -21,7 +21,10 @@ def main():
     embedding_service = EmbeddingService()
     vector_store = VectorStoreService()
 
-    pages = pdf_service.extract_pages("data/example.pdf")
+    project_root = Path(__file__).resolve().parent.parent
+    pdf_path = project_root / "data" / "example.pdf"
+
+    pages = pdf_service.extract_pages(pdf_path)
     chunks = chunk_service.chunk_pages(pages)
     embeddings = embedding_service.embed_texts(chunks)
 
