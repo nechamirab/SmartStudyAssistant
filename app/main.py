@@ -37,7 +37,7 @@ def main():
 
     qa_service = QAService(retrieval_service)
 
-    query = "What is the lecture about?"
+    query = "Why are sequential games important in business strategy?"
     qa_response = qa_service.answer(query)
 
     print("\n=== SOURCES ===")

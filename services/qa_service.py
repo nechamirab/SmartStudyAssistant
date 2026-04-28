@@ -73,7 +73,6 @@ class QAService:
         if not texts:
             return (
                 "You are a study assistant.\n"
-                "Answer only based on the provided context.\n"
                 "No relevant context was found.\n"
                 "Say that the document does not provide enough information.\n\n"
                 f"Question:\n{query}\n\n"
@@ -84,11 +83,13 @@ class QAService:
 
         return (
             "You are a study assistant answering questions about a PDF document.\n"
-            "Use only the context below.\n"
-            "Do not use outside knowledge.\n\n"
-            "If the context gives a direct answer, answer clearly.\n"
-            "If the context does not give a direct definition, explain what can be inferred "
-            "from the context and clearly state that the document does not provide an explicit definition.\n\n"
+            "Answer ONLY based on the provided context below.\n"
+            "Do NOT use outside knowledge.\n\n"
+            "Instructions:\n"
+            "1. If the context gives a direct answer, answer clearly.\n"
+            "2. If the context does not give a direct definition, explain what can be inferred from the context.\n"
+            "3. If the information is insufficient, clearly say that the document does not provide enough information.\n"
+            "4. Be concise and clear.\n\n"
             f"Context:\n{context}\n\n"
             f"Question:\n{query}\n\n"
             "Answer:"
