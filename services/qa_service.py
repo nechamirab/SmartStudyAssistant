@@ -20,7 +20,7 @@ class QAResponse:
     """
     query: str
     answer: str
-    sources: List[str]
+    sources: List[int]
 
 
 class QAService:
@@ -50,15 +50,18 @@ class QAService:
         try:
             retrieval_response = self.retrieval_service.retrieve(query, top_k=3)
 
-            texts = [res.chunk.text for res in retrieval_response.results]
+            chunks = retrieval_response.results
 
-            prompt = self._build_prompt(query, texts)
+            texts = [res.chunk.text for res in chunks]
+            pages = [res.chunk.page_number for res in chunks]
+
+            prompt = self._build_prompt(query, texts, pages)
             answer = self.llm_service.generate(prompt)
 
             return QAResponse(
                 query=query,
                 answer=answer,
-                sources=texts,
+                sources=pages,
             )
         except LLMError as e:
             raise QAError(f"LLM answer generation failed: {e}") from e
@@ -66,7 +69,7 @@ class QAService:
             raise QAError(f"QA failed: {e}") from e
 
     @staticmethod
-    def _build_prompt(query: str, texts: List[str]) -> str:
+    def _build_prompt(query: str, texts: List[str], pages: List[int]) -> str:
         """
         Build a grounded QA prompt from retrieved texts.
         """
@@ -79,7 +82,12 @@ class QAService:
                 "Answer:"
             )
 
-        context = "\n\n---\n\n".join(texts[:3])
+        context_parts = []
+        for text, page in zip(texts[:3], pages[:3]):
+            context_parts.append(
+                f"[Page {page}]\n{text}"
+            )
+        context = "\n\n---\n\n".join(context_parts)
 
         return (
             "You are a study assistant answering questions about a PDF document.\n"
@@ -88,8 +96,9 @@ class QAService:
             "Instructions:\n"
             "1. If the context gives a direct answer, answer clearly.\n"
             "2. If the context does not give a direct definition, explain what can be inferred from the context.\n"
-            "3. If the information is insufficient, clearly say that the document does not provide enough information.\n"
-            "4. Be concise and clear.\n\n"
+            "3. If the information is insufficient, clearly say that.\n"
+            "4. When possible, cite sources using page numbers, for example: (Page 2).\n"
+            "5. Be concise and clear.\n\n"
             f"Context:\n{context}\n\n"
             f"Question:\n{query}\n\n"
             "Answer:"
