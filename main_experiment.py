@@ -68,6 +68,14 @@ def define_experiments() -> List[ExperimentConfig]:
             answer_mode="llm",
         ),
 
+        ExperimentConfig(
+            chunk_size=500,
+            chunk_overlap=50,
+            top_k=3,
+            embedding_provider="openai",
+            answer_mode="llm"
+        ),
+
         # ===== CHUNK SIZE EXPERIMENTS =====
         # Small chunks: More focused retrieval
         ExperimentConfig(
