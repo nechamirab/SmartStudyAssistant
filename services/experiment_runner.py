@@ -294,20 +294,7 @@ class ExperimentRunner:
         # Step 1: Retrieve chunks
         start_time = time.time()
 
-        if config.answer_mode == "retrieved_chunks":
-            # Use standard retrieval
-            retrieval_response = retrieval_service.retrieve(
-                question,
-                top_k=config.top_k,
-            )
-            retrieved_chunks = [r.chunk.text for r in retrieval_response.results]
-
-        elif config.answer_mode == "llm":
-            qa_service = QAService(retrieval_service)
-            response = qa_service.answer(question)
-            answer = response.answer
-
-        elif config.answer_mode == "baseline" and config.baseline_method:
+        if config.answer_mode == "baseline" and config.baseline_method:
             # Use baseline retrieval
             baseline_results = baselines.retrieve_all_baselines(
                 question,
@@ -316,14 +303,28 @@ class ExperimentRunner:
             retrieved_chunks = RetrievalBaselines.chunks_to_text(
                 baseline_results[config.baseline_method]
             )
+
+        elif config.answer_mode in ("retrieved_chunks", "llm"):
+            retrieval_response = retrieval_service.retrieve(
+
+                question,
+
+                top_k=config.top_k,
+
+            )
+
+            retrieved_chunks = [r.chunk.text for r in retrieval_response.results]
+            retrieved_pages = [r.chunk.page_number for r in retrieval_response.results]
+
         else:
             retrieved_chunks = []
+            retrieved_pages = []
 
+        # Step 2: Generate answer
         if config.answer_mode == "llm":
             qa_service = QAService(retrieval_service)
-            qa_response = qa_service.answer(question)
-            generated_answer = qa_response.answer
-            retrieved_chunks = qa_response.sources
+            prompt = qa_service._build_prompt(question, retrieved_chunks, retrieved_pages)
+            generated_answer = qa_service.llm_service.generate(prompt)
 
         elif retrieved_chunks:
             generated_answer = "\n".join(retrieved_chunks)
