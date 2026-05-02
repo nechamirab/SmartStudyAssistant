@@ -1,0 +1,10 @@
+chunk_size,chunk_overlap,top_k,embedding_provider,embedding_model,answer_mode,baseline_method,num_chunks,questions_attempted,errors,accuracy,precision_at_k,grounding_score,avg_response_time_sec,questions_successful
+500,50,3,mock,text-embedding-3-small,retrieved_chunks,,50,10,0,0.0979,0.0,1.0,0.001,10/10
+300,30,3,mock,text-embedding-3-small,retrieved_chunks,,64,10,0,0.1085,0.0,1.0,0.001,10/10
+800,80,3,mock,text-embedding-3-small,retrieved_chunks,,47,10,0,0.0933,0.0,1.0,0.001,10/10
+500,50,1,mock,text-embedding-3-small,retrieved_chunks,,50,10,0,0.1189,0.0,1.0,0.001,10/10
+500,50,5,mock,text-embedding-3-small,retrieved_chunks,,50,10,0,0.0843,0.0,1.0,0.001,10/10
+300,30,5,mock,text-embedding-3-small,retrieved_chunks,,64,10,0,0.0906,0.0,1.0,0.001,10/10
+800,80,1,mock,text-embedding-3-small,retrieved_chunks,,47,10,0,0.1301,0.0,1.0,0.001,10/10
+500,50,3,mock,text-embedding-3-small,baseline,keyword_overlap,50,10,0,0.1054,0.0,1.0,0.0,10/10
+500,50,3,mock,text-embedding-3-small,baseline,random,50,10,0,0.1029,0.0,1.0,0.0,10/10
