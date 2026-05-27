@@ -60,7 +60,14 @@ class PdfService:
             for idx in range(doc.page_count):
                 page = doc.load_page(idx)
                 text = page.get_text("text") or ""
-                pages.append(DocumentPage(page_number=idx + 1, text=text))
+                pages.append(
+                    DocumentPage(
+                        page_number=idx + 1,
+                        text=text,
+                        source_id=pdf_path.name,
+                        metadata={"source": str(pdf_path)},
+                    )
+                )
         return pages
 
     @staticmethod
@@ -74,7 +81,14 @@ class PdfService:
         reader = PdfReader(str(pdf_path))
         for idx, page in enumerate(reader.pages):
             text = page.extract_text() or ""
-            pages.append(DocumentPage(page_number=idx + 1, text=text))
+            pages.append(
+                DocumentPage(
+                    page_number=idx + 1,
+                    text=text,
+                    source_id=pdf_path.name,
+                    metadata={"source": str(pdf_path)},
+                )
+            )
         return pages
 
     @staticmethod

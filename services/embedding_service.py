@@ -37,19 +37,30 @@ class EmbeddingService:
         provider: str = EMBEDDING_PROVIDER,
         model: str = EMBEDDING_MODEL,
         batch_size: int = 32,
+        normalize_embeddings: bool = True,
         cache_enabled: bool = True,
         cache_path: str = ".cache/embeddings.sqlite3",
+        fallback_to_mock: bool = True,
     ):
+        self.requested_provider = provider
         self.provider = provider
         self.model = model
         self.batch_size = batch_size
+        self.normalize_embeddings = normalize_embeddings
+        self.cache_enabled = cache_enabled
+        self.cache_path = cache_path
+        self.fallback_to_mock = fallback_to_mock
+        self.fallback_reason: str | None = None
+        self.embedding_dimension: int | None = None
         try:
             self._provider = EmbeddingProviderRegistry.create(
                 provider=provider,
                 model=model,
+                normalize_embeddings=normalize_embeddings,
                 cache_enabled=cache_enabled,
                 cache_path=cache_path,
             )
+            self.provider = self._provider.provider_name
             self.model = self._provider.model_name
         except EmbeddingProviderError as e:
             raise EmbeddingError(str(e)) from e
@@ -69,11 +80,15 @@ class EmbeddingService:
                 [chunk.text for chunk in chunks],
                 batch_size=self.batch_size,
             )
+            self._record_dimension(vectors)
             return [
                 EmbeddingResult(chunk_id=chunk.chunk_id, vector=vector)
                 for chunk, vector in zip(chunks, vectors)
             ]
         except EmbeddingProviderError as e:
+            if self._can_fallback():
+                self._fallback_to_mock(str(e))
+                return self.embed_texts(chunks)
             raise EmbeddingError(str(e)) from e
 
     def embed_query(self, query: str) -> list[float]:
@@ -91,8 +106,13 @@ class EmbeddingService:
             raise EmbeddingError("Query cannot be empty.")
 
         try:
-            return self._provider.embed_query(query)
+            vector = self._provider.embed_query(query)
+            self._record_dimension([vector])
+            return vector
         except EmbeddingProviderError as e:
+            if self._can_fallback():
+                self._fallback_to_mock(str(e))
+                return self.embed_query(query)
             raise EmbeddingError(str(e)) from e
 
     async def aembed_texts(self, chunks: list) -> list[EmbeddingResult]:
@@ -102,6 +122,7 @@ class EmbeddingService:
                 [chunk.text for chunk in chunks],
                 batch_size=self.batch_size,
             )
+            self._record_dimension(vectors)
             return [
                 EmbeddingResult(chunk_id=chunk.chunk_id, vector=vector)
                 for chunk, vector in zip(chunks, vectors)
@@ -109,6 +130,9 @@ class EmbeddingService:
         except AttributeError:
             return await asyncio.to_thread(self.embed_texts, chunks)
         except EmbeddingProviderError as e:
+            if self._can_fallback():
+                self._fallback_to_mock(str(e))
+                return await asyncio.to_thread(self.embed_texts, chunks)
             raise EmbeddingError(str(e)) from e
 
     async def aembed_query(self, query: str) -> list[float]:
@@ -117,10 +141,15 @@ class EmbeddingService:
         if not query:
             raise EmbeddingError("Query cannot be empty.")
         try:
-            return await self._provider.aembed_query(query)
+            vector = await self._provider.aembed_query(query)
+            self._record_dimension([vector])
+            return vector
         except AttributeError:
             return await asyncio.to_thread(self.embed_query, query)
         except EmbeddingProviderError as e:
+            if self._can_fallback():
+                self._fallback_to_mock(str(e))
+                return await asyncio.to_thread(self.embed_query, query)
             raise EmbeddingError(str(e)) from e
 
     def _embed_text(self, text: str) -> list[float]:
@@ -189,3 +218,29 @@ class EmbeddingService:
                 ) from e
 
             raise EmbeddingError(f"OpenAI embedding failed: {e}") from e
+
+    def _record_dimension(self, vectors: list[list[float]]) -> None:
+        """Store the last observed embedding dimension for reports."""
+        if vectors and vectors[0]:
+            self.embedding_dimension = len(vectors[0])
+
+    def _can_fallback(self) -> bool:
+        """Only fallback once, and never fallback from an already-mock provider."""
+        return self.fallback_to_mock and self.provider != "mock"
+
+    def _fallback_to_mock(self, reason: str) -> None:
+        """Switch to deterministic mock embeddings when optional providers fail."""
+        self.fallback_reason = reason
+        print(
+            "  ⚠️  Embedding provider unavailable; falling back to mock embeddings. "
+            f"Reason: {reason}"
+        )
+        self._provider = EmbeddingProviderRegistry.create(
+            provider="mock",
+            model="mock-hash-v1",
+            normalize_embeddings=self.normalize_embeddings,
+            cache_enabled=self.cache_enabled,
+            cache_path=self.cache_path,
+        )
+        self.provider = self._provider.provider_name
+        self.model = self._provider.model_name

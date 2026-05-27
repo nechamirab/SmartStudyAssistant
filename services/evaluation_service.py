@@ -33,10 +33,10 @@ class EvaluationResult:
     """Complete evaluation for one question."""
     question: str
     accuracy: float
-    precision_at_k: float
-    recall_at_k: float
-    mrr: float
-    ndcg: float
+    precision_at_k: float | None
+    recall_at_k: float | None
+    mrr: float | None
+    ndcg: float | None
     grounding_score: float
     hallucination_rate: float
     answer_relevancy: float
@@ -104,7 +104,7 @@ class EvaluationService:
         retrieved_chunks: List[str],
         expected_source_text: str,
         k: Optional[int] = None,
-    ) -> float:
+    ) -> float | None:
         """
         Precision@K: What fraction of top-K retrieved chunks contain the answer source?
 
@@ -125,7 +125,9 @@ class EvaluationService:
         Returns:
             Precision value between 0 and 1
         """
-        if not retrieved_chunks or not expected_source_text:
+        if not expected_source_text:
+            return None
+        if not retrieved_chunks:
             return 0.0
 
         # Use all chunks if k not specified
@@ -169,7 +171,7 @@ class EvaluationService:
         retrieved_chunks: List[str],
         expected_source_text: str,
         k: Optional[int] = None,
-    ) -> float:
+    ) -> float | None:
         """
         Recall@K for single-source QA labels.
 
@@ -177,6 +179,8 @@ class EvaluationService:
         the source and 0 otherwise. This is intentionally simple and compatible
         with the current local and RAGBench normalization.
         """
+        if not expected_source_text:
+            return None
         relevance = EvaluationService.calculate_relevance_vector(
             retrieved_chunks,
             expected_source_text,
@@ -189,8 +193,10 @@ class EvaluationService:
         retrieved_chunks: List[str],
         expected_source_text: str,
         k: Optional[int] = None,
-    ) -> float:
+    ) -> float | None:
         """Mean reciprocal rank for the first relevant retrieved chunk."""
+        if not expected_source_text:
+            return None
         relevance = EvaluationService.calculate_relevance_vector(
             retrieved_chunks,
             expected_source_text,
@@ -206,8 +212,10 @@ class EvaluationService:
         retrieved_chunks: List[str],
         expected_source_text: str,
         k: Optional[int] = None,
-    ) -> float:
+    ) -> float | None:
         """NDCG@K for binary source relevance labels."""
+        if not expected_source_text:
+            return None
         relevance = EvaluationService.calculate_relevance_vector(
             retrieved_chunks,
             expected_source_text,
@@ -417,10 +425,10 @@ class EvaluationService:
             return EvaluationResult(
                 question=question,
                 accuracy=0.0,
-                precision_at_k=0.0,
-                recall_at_k=0.0,
-                mrr=0.0,
-                ndcg=0.0,
+                precision_at_k=None,
+                recall_at_k=None,
+                mrr=None,
+                ndcg=None,
                 grounding_score=0.0,
                 hallucination_rate=1.0,
                 answer_relevancy=0.0,
@@ -459,31 +467,23 @@ class AggregatedMetrics:
 
     @property
     def precision_at_k(self) -> float:
-        """Average Precision@K."""
-        if not self.results:
-            return 0.0
-        return sum(r.precision_at_k for r in self.results) / self.count
+        """Average Precision@K, kept as 0.0 for older callers without labels."""
+        return self.optional_average("precision_at_k") or 0.0
 
     @property
     def recall_at_k(self) -> float:
         """Average Recall@K."""
-        if not self.results:
-            return 0.0
-        return sum(r.recall_at_k for r in self.results) / self.count
+        return self.optional_average("recall_at_k") or 0.0
 
     @property
     def mrr(self) -> float:
         """Average mean reciprocal rank."""
-        if not self.results:
-            return 0.0
-        return sum(r.mrr for r in self.results) / self.count
+        return self.optional_average("mrr") or 0.0
 
     @property
     def ndcg(self) -> float:
         """Average NDCG."""
-        if not self.results:
-            return 0.0
-        return sum(r.ndcg for r in self.results) / self.count
+        return self.optional_average("ndcg") or 0.0
 
     @property
     def grounding_score(self) -> float:
@@ -529,12 +529,16 @@ class AggregatedMetrics:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for CSV export."""
+        precision = self.optional_average("precision_at_k")
+        recall = self.optional_average("recall_at_k")
+        mrr = self.optional_average("mrr")
+        ndcg = self.optional_average("ndcg")
         return {
             "accuracy": round(self.accuracy, 4),
-            "precision_at_k": round(self.precision_at_k, 4),
-            "recall_at_k": round(self.recall_at_k, 4),
-            "mrr": round(self.mrr, 4),
-            "ndcg": round(self.ndcg, 4),
+            "precision_at_k": round(precision, 4) if precision is not None else None,
+            "recall_at_k": round(recall, 4) if recall is not None else None,
+            "mrr": round(mrr, 4) if mrr is not None else None,
+            "ndcg": round(ndcg, 4) if ndcg is not None else None,
             "grounding_score": round(self.grounding_score, 4),
             "hallucination_rate": round(self.hallucination_rate, 4),
             "answer_relevancy": round(self.answer_relevancy, 4),
@@ -542,4 +546,18 @@ class AggregatedMetrics:
             "context_usage_rate": round(self.context_usage_rate, 4),
             "avg_response_time_sec": round(self.avg_response_time, 3),
             "questions_successful": f"{self.successful}/{self.count}",
+            "retrieval_labels_available": sum(
+                1 for r in self.results if r.precision_at_k is not None
+            ),
         }
+
+    def optional_average(self, metric_name: str) -> float | None:
+        """Average optional metrics without converting missing labels to zero."""
+        values = [
+            value
+            for value in (getattr(result, metric_name) for result in self.results)
+            if value is not None
+        ]
+        if not values:
+            return None
+        return sum(values) / len(values)

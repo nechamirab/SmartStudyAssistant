@@ -38,7 +38,10 @@ class ExperimentConfig:
     chunk_overlap: int
     top_k: int
     embedding_provider: str = "mock"
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = ""
+    embedding_batch_size: int = 32
+    normalize_embeddings: bool = True
+    embedding_dimension: int | None = None
     chunking_strategy: str = "recursive"
     retrieval_mode: str = "semantic"  # Options: semantic, bm25, hybrid
     reranker: Optional[str] = None  # Options: heuristic
@@ -61,6 +64,7 @@ class ExperimentConfig:
             f"overlap={self.chunk_overlap}, "
             f"top_k={self.top_k}, "
             f"provider={self.embedding_provider}, "
+            f"model={self.embedding_model or 'default'}, "
             f"chunking={self.chunking_strategy}, "
             f"retrieval={self.retrieval_mode}, "
             f"vector_store={self.vector_store}, "
@@ -209,10 +213,18 @@ class ExperimentRunner:
             embedding_service = EmbeddingService(
                 provider=config.embedding_provider,
                 model=config.embedding_model,
+                batch_size=config.embedding_batch_size,
+                normalize_embeddings=config.normalize_embeddings,
             )
             embeddings = embedding_service.embed_texts(chunks)
+            config.embedding_provider = embedding_service.provider
+            config.embedding_model = embedding_service.model
+            config.embedding_dimension = embedding_service.embedding_dimension
             if verbose:
-                print(f"     ✓ Created {len(embeddings)} embeddings")
+                print(
+                    f"     ✓ Created {len(embeddings)} embeddings "
+                    f"(dim={config.embedding_dimension or 'unknown'})"
+                )
 
             # Step 4: Build vector store
             if verbose:
@@ -276,7 +288,9 @@ class ExperimentRunner:
             if verbose:
                 print(f"\n  Results:")
                 print(f"    Accuracy: {aggregated.accuracy:.3f}")
-                print(f"    Precision@K: {aggregated.precision_at_k:.3f}")
+                precision = aggregated.optional_average("precision_at_k")
+                precision_label = f"{precision:.3f}" if precision is not None else "n/a"
+                print(f"    Precision@K: {precision_label}")
                 print(f"    Grounding Score: {aggregated.grounding_score:.3f}")
                 print(f"    Avg Response Time: {aggregated.avg_response_time:.3f}s")
 
@@ -364,7 +378,11 @@ class ExperimentRunner:
             cited_chunk_ids = []
 
         # Step 2: Generate answer
-        if config.answer_mode == "retrieved_chunks" and config.generation_mode == "grounded":
+        if config.answer_mode == "retrieved_chunks" and config.generation_mode in {
+            "grounded",
+            "grounded_mock",
+            "llm",
+        }:
             generation_contexts = AnswerGenerator.contexts_from_search_results(
                 retrieval_response.results
             )
