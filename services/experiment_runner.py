@@ -20,7 +20,6 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from core.config import CHUNK_SIZE, CHUNK_OVERLAP
 from core.models import DocumentChunk
 from services.pdf_service import PdfService
 from services.chunk_service import ChunkService

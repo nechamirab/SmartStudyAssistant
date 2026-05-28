@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import List
 
 from core.config import EMBEDDING_MODEL, EMBEDDING_PROVIDER, MOCK_EMBEDDING_DIM
 
@@ -19,7 +20,7 @@ class EmbeddingResult:
         vector: The embedding vector.
     """
     chunk_id: str
-    vector: list[float]
+    vector: List[float]
 
 
 class EmbeddingService:
@@ -27,14 +28,16 @@ class EmbeddingService:
     Service responsible for generating embeddings for document chunks and queries.
     Supports:
     - mock embeddings for offline/testing mode
+    - sentence-transformers embeddings for local semantic search
     - OpenAI embeddings for real semantic search
     """
 
     def __init__(self, provider: str = EMBEDDING_PROVIDER, model: str = EMBEDDING_MODEL):
         self.provider = provider
         self.model = model
+        self._sentence_transformer = None
 
-    def embed_texts(self, chunks: list) -> list[EmbeddingResult]:
+    def embed_texts(self, chunks: List) -> List[EmbeddingResult]:
         """
         Generate embeddings for a list of document chunks.
         Args:
@@ -44,7 +47,7 @@ class EmbeddingService:
         Raises:
             EmbeddingError: If embedding generation fails.
         """
-        results: list[EmbeddingResult] = []
+        results: List[EmbeddingResult] = []
 
         for chunk in chunks:
             vector = self._embed_text(chunk.text)
@@ -57,7 +60,7 @@ class EmbeddingService:
 
         return results
 
-    def embed_query(self, query: str) -> list[float]:
+    def embed_query(self, query: str) -> List[float]:
         """
         Generate an embedding vector for a user query.
         Args:
@@ -73,12 +76,15 @@ class EmbeddingService:
 
         return self._embed_text(query)
 
-    def _embed_text(self, text: str) -> list[float]:
+    def _embed_text(self, text: str) -> List[float]:
         """
         Route embedding generation according to the configured provider.
         """
         if self.provider == "mock":
             return self._mock_embed(text)
+
+        if self.provider == "sentence-transformers":
+            return self._sentence_transformers_embed(text)
 
         if self.provider == "openai":
             return self._openai_embed(text)
@@ -86,7 +92,7 @@ class EmbeddingService:
         raise EmbeddingError(f"Unsupported embedding provider: {self.provider}")
 
     @staticmethod
-    def _mock_embed(text: str) -> list[float]:
+    def _mock_embed(text: str) -> List[float]:
         """
         Generate a deterministic mock embedding for offline development.
 
@@ -106,7 +112,30 @@ class EmbeddingService:
 
         return [v / norm for v in vector]
 
-    def _openai_embed(self, text: str) -> list[float]:
+    def _sentence_transformers_embed(self, text: str) -> List[float]:
+        """
+        Generate a real embedding using sentence-transformers.
+        """
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            raise EmbeddingError(
+                "sentence-transformers is not installed. Run: python -m pip install sentence-transformers"
+            ) from e
+
+        if self._sentence_transformer is None:
+            try:
+                self._sentence_transformer = SentenceTransformer(self.model)
+            except Exception as e:
+                raise EmbeddingError(f"Failed to load sentence-transformers model: {e}") from e
+
+        try:
+            embedding = self._sentence_transformer.encode(text, convert_to_numpy=False)
+            return [float(value) for value in embedding]
+        except Exception as e:
+            raise EmbeddingError(f"Sentence-transformers embedding failed: {e}") from e
+
+    def _openai_embed(self, text: str) -> List[float]:
         """
         Generate a real embedding using OpenAI API.
         """
