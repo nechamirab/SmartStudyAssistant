@@ -5,7 +5,8 @@ from services.pdf_service import PdfService
 from services.retrieval_service import RetrievalService
 from services.vector_store_service import VectorStoreService
 from services.qa_service import QAService
-
+from services.quiz_service import QuizService
+from pathlib import Path
 
 def main():
     """
@@ -21,7 +22,10 @@ def main():
     embedding_service = EmbeddingService()
     vector_store = VectorStoreService()
 
-    pages = pdf_service.extract_pages("data/example.pdf")
+    project_root = Path(__file__).resolve().parent.parent
+    pdf_path = project_root / "data" / "example.pdf"
+
+    pages = pdf_service.extract_pages(pdf_path)
     chunks = chunk_service.chunk_pages(pages)
     embeddings = embedding_service.embed_texts(chunks)
 
@@ -34,8 +38,12 @@ def main():
 
     qa_service = QAService(retrieval_service)
 
-    query = "What is a sequential game?"
+    query = "What is the lecture about?"
     qa_response = qa_service.answer(query)
+
+    print("\n=== SOURCES ===")
+    for i, page in enumerate(qa_response.sources, start=1):
+        print(f"\n--- Source {i} (Page {page}) ---")
 
     print(f"Pages extracted: {len(pages)}")
     print(f"Chunks created: {len(chunks)}")
@@ -45,6 +53,22 @@ def main():
     print(f"Query: {qa_response.query}")
     print("\nAnswer:")
     print(qa_response.answer)
+
+    print("\n=== QUIZ ===")
+
+    quiz_service = QuizService(retrieval_service)
+
+    quiz_questions = quiz_service.generate_quiz(
+        topic="Sequential games",
+        num_questions=3,
+    )
+
+    for i, q in enumerate(quiz_questions, start=1):
+        print(f"\nQuestion {i}:")
+        print(q.question)
+
+        print("Answer:")
+        print(q.answer)
 
 
 if __name__ == "__main__":

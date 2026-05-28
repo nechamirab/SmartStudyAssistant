@@ -4,5 +4,8 @@ __pycache__/
 *.pyc
 
 .idea/
-data/open-rag-bench/
-.cache/
+
+# experiment outputs
+results/
+
+temp.pdf
