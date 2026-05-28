@@ -18,6 +18,13 @@ class EmbeddingProviderError(Exception):
     """Raised when an embedding provider cannot create vectors."""
 
 
+def normalize_vector(vector: Sequence[float]) -> list[float]:
+    """Return an L2-normalized copy of a vector."""
+    values = [float(value) for value in vector]
+    norm = math.sqrt(sum(value * value for value in values))
+    return [value / norm for value in values] if norm else values
+
+
 class BaseEmbeddingProvider(Protocol):
     """Common interface for all embedding backends."""
 
@@ -113,6 +120,7 @@ class MockEmbeddingProvider:
     model_name: str = "mock-hash-v1"
     dimension: int = MOCK_EMBEDDING_DIM
     provider_name: str = "mock"
+    normalize_embeddings: bool = True
 
     def embed_texts(self, texts: Sequence[str], batch_size: int = 32) -> list[list[float]]:
         return [self._embed(text) for text in texts]
@@ -129,7 +137,9 @@ class MockEmbeddingProvider:
             index = (ord(ch) + i) % self.dimension
             vector[index] += 1.0
         norm = math.sqrt(sum(v * v for v in vector))
-        return [v / norm for v in vector] if norm else vector
+        if self.normalize_embeddings:
+            return [v / norm for v in vector] if norm else vector
+        return vector
 
 
 class SentenceTransformersEmbeddingProvider:
@@ -150,12 +160,18 @@ class SentenceTransformersEmbeddingProvider:
         "e5": "intfloat/e5-small-v2",
     }
 
-    def __init__(self, provider_name: str, model_name: str | None = None) -> None:
+    def __init__(
+        self,
+        provider_name: str,
+        model_name: str | None = None,
+        normalize_embeddings: bool = True,
+    ) -> None:
         self.provider_name = provider_name
         self.model_name = model_name or self.DEFAULT_MODELS.get(
             provider_name,
             self.DEFAULT_MODELS["sentence-transformers"],
         )
+        self.normalize_embeddings = normalize_embeddings
         self._model = None
 
     def embed_texts(self, texts: Sequence[str], batch_size: int = 32) -> list[list[float]]:
@@ -164,7 +180,7 @@ class SentenceTransformersEmbeddingProvider:
         vectors = model.encode(
             prepared,
             batch_size=batch_size,
-            normalize_embeddings=True,
+            normalize_embeddings=self.normalize_embeddings,
             show_progress_bar=False,
         )
         return [self._to_list(vector) for vector in vectors]
@@ -173,7 +189,14 @@ class SentenceTransformersEmbeddingProvider:
         query = (query or "").strip()
         if not query:
             raise EmbeddingProviderError("Query cannot be empty.")
-        return self.embed_texts([self._prepare_query(query)], batch_size=1)[0]
+        model = self._load_model()
+        vectors = model.encode(
+            [self._prepare_query(query)],
+            batch_size=1,
+            normalize_embeddings=self.normalize_embeddings,
+            show_progress_bar=False,
+        )
+        return self._to_list(vectors[0])
 
     def _load_model(self):
         if self._model is not None:
@@ -294,6 +317,8 @@ class EmbeddingProviderRegistry:
         "sentence-transformers",
         "sentence_transformers",
         "sentence-transformer",
+        "minilm",
+        "all-minilm-l6-v2",
         "huggingface",
         "hf",
         "bge",
@@ -305,17 +330,25 @@ class EmbeddingProviderRegistry:
         cls,
         provider: str,
         model: str | None = None,
+        normalize_embeddings: bool = True,
         cache_enabled: bool = True,
         cache_path: str | Path = ".cache/embeddings.sqlite3",
     ) -> BaseEmbeddingProvider:
         normalized = (provider or "mock").strip().lower()
         if normalized == "mock":
-            base: BaseEmbeddingProvider = MockEmbeddingProvider(model_name=model or "mock-hash-v1")
+            base: BaseEmbeddingProvider = MockEmbeddingProvider(
+                model_name=model or "mock-hash-v1",
+                normalize_embeddings=normalize_embeddings,
+            )
         elif normalized == "openai":
             base = OpenAIEmbeddingProvider(model_name=model or "text-embedding-3-small")
         elif normalized in cls.SENTENCE_TRANSFORMER_ALIASES:
             provider_name = cls._canonical_sentence_provider(normalized)
-            base = SentenceTransformersEmbeddingProvider(provider_name, model)
+            base = SentenceTransformersEmbeddingProvider(
+                provider_name,
+                model,
+                normalize_embeddings=normalize_embeddings,
+            )
         else:
             raise EmbeddingProviderError(f"Unsupported embedding provider: {provider}")
 
@@ -325,7 +358,12 @@ class EmbeddingProviderRegistry:
 
     @staticmethod
     def _canonical_sentence_provider(provider: str) -> str:
-        if provider in {"sentence_transformers", "sentence-transformer"}:
+        if provider in {
+            "sentence_transformers",
+            "sentence-transformer",
+            "minilm",
+            "all-minilm-l6-v2",
+        }:
             return "sentence-transformers"
         if provider == "hf":
             return "huggingface"

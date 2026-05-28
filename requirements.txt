@@ -1,5 +1,21 @@
-datasets
-huggingface_hub
-openai
+streamlit
 PyMuPDF
 pypdf
+numpy
+
+# Optional real embedding providers:
+# sentence-transformers
+# huggingface_hub
+# openai
+
+# Optional benchmark downloader:
+# datasets
+
+# Optional vector database backends:
+# faiss-cpu
+# chromadb
+# qdrant-client
+
+# Optional OCR support:
+# Pillow
+# pytesseract

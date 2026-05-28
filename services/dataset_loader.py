@@ -105,7 +105,10 @@ class DatasetLoader:
 
             source_text = str(record.get("source_text", "") or "").strip()
             if not source_text:
-                print(f"⚠️  Eval record {index} has no source_text; retrieval precision may be 0")
+                print(
+                    f"⚠️  Eval record {index} has no source_text; "
+                    "retrieval metrics will be marked unavailable"
+                )
 
             metadata = dict(record.get("metadata", {}) or {})
             for key, value in record.items():

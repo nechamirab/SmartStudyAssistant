@@ -23,11 +23,12 @@ from core.models import DocumentChunk
 from services.chunk_service import ChunkService
 from services.dataset_loader import DatasetLoader, ExperimentDataset
 from services.embedding_service import EmbeddingService
-from services.vector_store_service import VectorStoreService
 from services.retrieval_service import RetrievalService
 from services.evaluation_service import EvaluationService, AggregatedMetrics, EvaluationResult
 from services.baseline_retriever import RetrievalBaselines
 from reranking.rerankers import HeuristicReranker
+from vectorstores.factory import VectorStoreFactory
+from generation.answer_generator import AnswerGenerator
 
 @dataclass
 class ExperimentConfig:
@@ -36,10 +37,18 @@ class ExperimentConfig:
     chunk_overlap: int
     top_k: int
     embedding_provider: str = "mock"
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = ""
+    embedding_batch_size: int = 32
+    normalize_embeddings: bool = True
+    embedding_dimension: int | None = None
     chunking_strategy: str = "recursive"
     retrieval_mode: str = "semantic"  # Options: semantic, bm25, hybrid
     reranker: Optional[str] = None  # Options: heuristic
+    vector_store: str = "memory"  # Options: memory, faiss, chroma, qdrant
+    vector_store_path: Optional[str] = None
+    generation_mode: str = "retrieved_chunks"  # Options: retrieved_chunks, grounded
+    llm_provider: str = "mock"  # Options: mock, openai
+    show_citations: bool = False
     answer_mode: str = "retrieved_chunks"  # Options: retrieved_chunks, llm (future), baseline
     baseline_method: Optional[str] = None  # If answer_mode=baseline
 
@@ -54,8 +63,11 @@ class ExperimentConfig:
             f"overlap={self.chunk_overlap}, "
             f"top_k={self.top_k}, "
             f"provider={self.embedding_provider}, "
+            f"model={self.embedding_model or 'default'}, "
             f"chunking={self.chunking_strategy}, "
-            f"retrieval={self.retrieval_mode}"
+            f"retrieval={self.retrieval_mode}, "
+            f"vector_store={self.vector_store}, "
+            f"generation={self.generation_mode}"
         )
 
 
@@ -200,16 +212,30 @@ class ExperimentRunner:
             embedding_service = EmbeddingService(
                 provider=config.embedding_provider,
                 model=config.embedding_model,
+                batch_size=config.embedding_batch_size,
+                normalize_embeddings=config.normalize_embeddings,
             )
             embeddings = embedding_service.embed_texts(chunks)
+            config.embedding_provider = embedding_service.provider
+            config.embedding_model = embedding_service.model
+            config.embedding_dimension = embedding_service.embedding_dimension
             if verbose:
-                print(f"     ✓ Created {len(embeddings)} embeddings")
+                print(
+                    f"     ✓ Created {len(embeddings)} embeddings "
+                    f"(dim={config.embedding_dimension or 'unknown'})"
+                )
 
             # Step 4: Build vector store
             if verbose:
-                print("  4. Building vector store...")
-            vector_store = VectorStoreService()
+                print(f"  4. Building vector store ({config.vector_store})...")
+            vector_store = VectorStoreFactory.create(
+                backend=config.vector_store,
+                collection_name=f"{self.dataset.name}_{config.chunking_strategy}",
+                persist_path=config.vector_store_path,
+            )
             vector_store.add(chunks, embeddings)
+            if config.vector_store_path:
+                vector_store.save(config.vector_store_path)
 
             # Step 5: Setup retrieval
             reranker = HeuristicReranker() if config.reranker == "heuristic" else None
@@ -219,6 +245,10 @@ class ExperimentRunner:
                 chunks=chunks,
                 retrieval_mode=config.retrieval_mode,
                 reranker=reranker,
+            )
+            answer_generator = AnswerGenerator(
+                llm_provider=config.llm_provider,
+                show_citations=config.show_citations,
             )
 
             # Also setup baselines if needed
@@ -241,6 +271,7 @@ class ExperimentRunner:
                         config,
                         retrieval_service,
                         baselines,
+                        answer_generator,
                         chunks,
                     )
                     evaluation_results.append(result)
@@ -256,7 +287,9 @@ class ExperimentRunner:
             if verbose:
                 print(f"\n  Results:")
                 print(f"    Accuracy: {aggregated.accuracy:.3f}")
-                print(f"    Precision@K: {aggregated.precision_at_k:.3f}")
+                precision = aggregated.optional_average("precision_at_k")
+                precision_label = f"{precision:.3f}" if precision is not None else "n/a"
+                print(f"    Precision@K: {precision_label}")
                 print(f"    Grounding Score: {aggregated.grounding_score:.3f}")
                 print(f"    Avg Response Time: {aggregated.avg_response_time:.3f}s")
 
@@ -291,6 +324,7 @@ class ExperimentRunner:
         config: ExperimentConfig,
         retrieval_service: RetrievalService,
         baselines: RetrievalBaselines,
+        answer_generator: AnswerGenerator,
         chunks: List[DocumentChunk],
     ) -> EvaluationResult:
         """
@@ -316,7 +350,17 @@ class ExperimentRunner:
         # Step 1: Retrieve chunks
         start_time = time.time()
 
-        if config.answer_mode == "baseline" and config.baseline_method:
+        if config.answer_mode == "retrieved_chunks":
+            # Use standard retrieval
+            retrieval_response = retrieval_service.retrieve(
+                question,
+                top_k=config.top_k,
+            )
+            retrieved_chunks = [r.chunk.text for r in retrieval_response.results]
+            used_chunk_ids: list[str] = []
+            cited_chunk_ids: list[str] = []
+
+        elif config.answer_mode == "baseline" and config.baseline_method:
             # Use baseline retrieval
             baseline_results = baselines.retrieve_all_baselines(
                 question,
@@ -325,29 +369,29 @@ class ExperimentRunner:
             retrieved_chunks = RetrievalBaselines.chunks_to_text(
                 baseline_results[config.baseline_method]
             )
-
-        elif config.answer_mode in ("retrieved_chunks", "llm"):
-            retrieval_response = retrieval_service.retrieve(
-
-                question,
-
-                top_k=config.top_k,
-
-            )
-
-            retrieved_chunks = [r.chunk.text for r in retrieval_response.results]
-            retrieved_pages = [r.chunk.page_number for r in retrieval_response.results]
-
+            used_chunk_ids = []
+            cited_chunk_ids = []
         else:
             retrieved_chunks = []
-            retrieved_pages = []
+            used_chunk_ids = []
+            cited_chunk_ids = []
 
         # Step 2: Generate answer
-        if config.answer_mode == "llm":
-            qa_service = QAService(retrieval_service)
-            prompt = qa_service._build_prompt(question, retrieved_chunks, retrieved_pages)
-            generated_answer = qa_service.llm_service.generate(prompt)
-
+        if config.answer_mode == "retrieved_chunks" and config.generation_mode in {
+            "grounded",
+            "grounded_mock",
+            "llm",
+        }:
+            generation_contexts = AnswerGenerator.contexts_from_search_results(
+                retrieval_response.results
+            )
+            generation_result = answer_generator.generate(
+                question=question,
+                contexts=generation_contexts,
+            )
+            generated_answer = generation_result.answer
+            used_chunk_ids = generation_result.used_chunk_ids
+            cited_chunk_ids = [citation.chunk_id for citation in generation_result.citations]
         elif retrieved_chunks:
             generated_answer = "\n".join(retrieved_chunks)
 
@@ -364,6 +408,8 @@ class ExperimentRunner:
             retrieved_chunks=retrieved_chunks,
             response_time=response_time,
             expected_source_text=source_text,
+            used_chunk_ids=used_chunk_ids,
+            cited_chunk_ids=cited_chunk_ids,
         )
 
 

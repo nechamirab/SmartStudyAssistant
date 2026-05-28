@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from core.models import DocumentChunk
-from services.vector_store_service import SearchResult, VectorStoreService
+from vectorstores.base import BaseVectorStore, SearchResult
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
@@ -90,7 +90,7 @@ class HybridRetriever:
 
     def __init__(
         self,
-        vector_store: VectorStoreService,
+        vector_store: BaseVectorStore,
         bm25_retriever: BM25Retriever,
         semantic_weight: float = 0.65,
         keyword_weight: float = 0.35,

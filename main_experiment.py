@@ -29,6 +29,7 @@ This lets you understand the trade-offs and write informed analysis in your repo
 
 import csv
 import argparse
+import json
 from pathlib import Path
 from typing import List
 
@@ -43,11 +44,20 @@ from services.ragbench_loader import RAGBenchLoader
 
 def define_experiments(
     embedding_provider: str = "mock",
+    embedding_model: str = "",
+    embedding_batch_size: int = 32,
+    normalize_embeddings: bool = True,
     chunk_size: int | None = None,
+    overlap: int | None = None,
     top_k: int | None = None,
     chunking_strategy: str = "recursive",
     retrieval_mode: str = "semantic",
     reranker: str | None = None,
+    vector_store: str = "memory",
+    vector_store_path: str | None = None,
+    generation_mode: str = "retrieved_chunks",
+    llm_provider: str = "mock",
+    show_citations: bool = False,
 ) -> List[ExperimentConfig]:
     """
     Define configurations to test.
@@ -57,18 +67,27 @@ def define_experiments(
     - Shallow retrieval vs deep retrieval
     - Cost vs quality
     """
-    if chunk_size is not None or top_k is not None:
+    if chunk_size is not None or overlap is not None or top_k is not None:
         selected_chunk_size = chunk_size or 500
+        selected_overlap = overlap if overlap is not None else max(0, selected_chunk_size // 10)
         selected_top_k = top_k or 3
         return [
             ExperimentConfig(
                 chunk_size=selected_chunk_size,
-                chunk_overlap=max(0, selected_chunk_size // 10),
+                chunk_overlap=selected_overlap,
                 top_k=selected_top_k,
                 embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                embedding_batch_size=embedding_batch_size,
+                normalize_embeddings=normalize_embeddings,
                 chunking_strategy=chunking_strategy,
                 retrieval_mode=retrieval_mode,
                 reranker=reranker,
+                vector_store=vector_store,
+                vector_store_path=vector_store_path,
+                generation_mode=generation_mode,
+                llm_provider=llm_provider,
+                show_citations=show_citations,
                 answer_mode="retrieved_chunks",
             )
         ]
@@ -80,9 +99,17 @@ def define_experiments(
             chunk_overlap=50,
             top_k=3,
             embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_batch_size=embedding_batch_size,
+            normalize_embeddings=normalize_embeddings,
             chunking_strategy=chunking_strategy,
             retrieval_mode=retrieval_mode,
             reranker=reranker,
+            vector_store=vector_store,
+            vector_store_path=vector_store_path,
+            generation_mode=generation_mode,
+            llm_provider=llm_provider,
+            show_citations=show_citations,
             answer_mode="retrieved_chunks",
         ),
 
@@ -111,9 +138,17 @@ def define_experiments(
             chunk_overlap=30,
             top_k=3,
             embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_batch_size=embedding_batch_size,
+            normalize_embeddings=normalize_embeddings,
             chunking_strategy=chunking_strategy,
             retrieval_mode=retrieval_mode,
             reranker=reranker,
+            vector_store=vector_store,
+            vector_store_path=vector_store_path,
+            generation_mode=generation_mode,
+            llm_provider=llm_provider,
+            show_citations=show_citations,
             answer_mode="retrieved_chunks",
         ),
         # Large chunks: More context
@@ -122,9 +157,17 @@ def define_experiments(
             chunk_overlap=80,
             top_k=3,
             embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_batch_size=embedding_batch_size,
+            normalize_embeddings=normalize_embeddings,
             chunking_strategy=chunking_strategy,
             retrieval_mode=retrieval_mode,
             reranker=reranker,
+            vector_store=vector_store,
+            vector_store_path=vector_store_path,
+            generation_mode=generation_mode,
+            llm_provider=llm_provider,
+            show_citations=show_citations,
             answer_mode="retrieved_chunks",
         ),
 
@@ -135,9 +178,17 @@ def define_experiments(
             chunk_overlap=50,
             top_k=1,
             embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_batch_size=embedding_batch_size,
+            normalize_embeddings=normalize_embeddings,
             chunking_strategy=chunking_strategy,
             retrieval_mode=retrieval_mode,
             reranker=reranker,
+            vector_store=vector_store,
+            vector_store_path=vector_store_path,
+            generation_mode=generation_mode,
+            llm_provider=llm_provider,
+            show_citations=show_citations,
             answer_mode="retrieved_chunks",
         ),
         # Deep retrieval
@@ -146,9 +197,17 @@ def define_experiments(
             chunk_overlap=50,
             top_k=5,
             embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_batch_size=embedding_batch_size,
+            normalize_embeddings=normalize_embeddings,
             chunking_strategy=chunking_strategy,
             retrieval_mode=retrieval_mode,
             reranker=reranker,
+            vector_store=vector_store,
+            vector_store_path=vector_store_path,
+            generation_mode=generation_mode,
+            llm_provider=llm_provider,
+            show_citations=show_citations,
             answer_mode="retrieved_chunks",
         ),
 
@@ -159,9 +218,17 @@ def define_experiments(
             chunk_overlap=30,
             top_k=5,
             embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_batch_size=embedding_batch_size,
+            normalize_embeddings=normalize_embeddings,
             chunking_strategy=chunking_strategy,
             retrieval_mode=retrieval_mode,
             reranker=reranker,
+            vector_store=vector_store,
+            vector_store_path=vector_store_path,
+            generation_mode=generation_mode,
+            llm_provider=llm_provider,
+            show_citations=show_citations,
             answer_mode="retrieved_chunks",
         ),
         # Large chunks + shallow retrieval (fastest)
@@ -170,9 +237,17 @@ def define_experiments(
             chunk_overlap=80,
             top_k=1,
             embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_batch_size=embedding_batch_size,
+            normalize_embeddings=normalize_embeddings,
             chunking_strategy=chunking_strategy,
             retrieval_mode=retrieval_mode,
             reranker=reranker,
+            vector_store=vector_store,
+            vector_store_path=vector_store_path,
+            generation_mode=generation_mode,
+            llm_provider=llm_provider,
+            show_citations=show_citations,
             answer_mode="retrieved_chunks",
         ),
 
@@ -183,8 +258,16 @@ def define_experiments(
             chunk_overlap=50,
             top_k=3,
             embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_batch_size=embedding_batch_size,
+            normalize_embeddings=normalize_embeddings,
             chunking_strategy=chunking_strategy,
             retrieval_mode=retrieval_mode,
+            vector_store=vector_store,
+            vector_store_path=vector_store_path,
+            generation_mode="retrieved_chunks",
+            llm_provider=llm_provider,
+            show_citations=False,
             answer_mode="baseline",
             baseline_method="keyword_overlap",
         ),
@@ -194,8 +277,16 @@ def define_experiments(
             chunk_overlap=50,
             top_k=3,
             embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_batch_size=embedding_batch_size,
+            normalize_embeddings=normalize_embeddings,
             chunking_strategy=chunking_strategy,
             retrieval_mode=retrieval_mode,
+            vector_store=vector_store,
+            vector_store_path=vector_store_path,
+            generation_mode="retrieved_chunks",
+            llm_provider=llm_provider,
+            show_citations=False,
             answer_mode="baseline",
             baseline_method="random",
         ),
@@ -228,15 +319,31 @@ def save_results_to_csv(
         "expected_answer",
         "generated_answer",
         "precision_at_k",
+        "recall_at_k",
+        "mrr",
+        "ndcg",
         "accuracy",
         "grounding_score",
+        "hallucination_rate",
+        "answer_relevancy",
+        "citation_coverage",
+        "context_usage_rate",
         "response_time",
         "chunk_size",
         "top_k",
         "embedding_provider",
+        "embedding_model",
+        "embedding_dimension",
+        "embedding_batch_size",
+        "normalize_embeddings",
         "chunking_strategy",
         "retrieval_mode",
         "reranker",
+        "vector_store",
+        "generation_mode",
+        "llm_provider",
+        "used_chunk_ids",
+        "cited_chunk_ids",
         "retrieval_method",
         "chunk_overlap",
         "num_chunks",
@@ -255,16 +362,32 @@ def save_results_to_csv(
                         "question": evaluation.question,
                         "expected_answer": evaluation.ground_truth_answer,
                         "generated_answer": evaluation.generated_answer,
-                        "precision_at_k": round(evaluation.precision_at_k, 4),
+                        "precision_at_k": format_metric(evaluation.precision_at_k),
+                        "recall_at_k": format_metric(evaluation.recall_at_k),
+                        "mrr": format_metric(evaluation.mrr),
+                        "ndcg": format_metric(evaluation.ndcg),
                         "accuracy": round(evaluation.accuracy, 4),
                         "grounding_score": round(evaluation.grounding_score, 4),
+                        "hallucination_rate": round(evaluation.hallucination_rate, 4),
+                        "answer_relevancy": round(evaluation.answer_relevancy, 4),
+                        "citation_coverage": round(evaluation.citation_coverage, 4),
+                        "context_usage_rate": round(evaluation.context_usage_rate, 4),
                         "response_time": round(evaluation.response_time, 4),
                         "chunk_size": config.chunk_size,
                         "top_k": config.top_k,
                         "embedding_provider": config.embedding_provider,
+                        "embedding_model": config.embedding_model,
+                        "embedding_dimension": config.embedding_dimension or "",
+                        "embedding_batch_size": config.embedding_batch_size,
+                        "normalize_embeddings": config.normalize_embeddings,
                         "chunking_strategy": config.chunking_strategy,
                         "retrieval_mode": config.retrieval_mode,
                         "reranker": config.reranker or "",
+                        "vector_store": config.vector_store,
+                        "generation_mode": config.generation_mode,
+                        "llm_provider": config.llm_provider,
+                        "used_chunk_ids": " ".join(evaluation.used_chunk_ids),
+                        "cited_chunk_ids": " ".join(evaluation.cited_chunk_ids),
                         "retrieval_method": result.retrieval_method(),
                         "chunk_overlap": config.chunk_overlap,
                         "num_chunks": result.num_chunks,
@@ -273,6 +396,78 @@ def save_results_to_csv(
                 )
 
     print(f"✓ Saved results to {output_path}")
+
+
+def format_metric(value: float | None) -> str:
+    """Format optional metrics without pretending missing labels are zero."""
+    if value is None:
+        return "not_available"
+    return f"{value:.4f}"
+
+
+def format_metric_short(value: float | None) -> str:
+    """Compact optional metric format for markdown and console tables."""
+    if value is None:
+        return "n/a"
+    return f"{value:.3f}"
+
+
+def aggregate_metric_value(result, metric_name: str) -> float | None:
+    """Return an aggregate metric only when at least one question has labels."""
+    values = [
+        getattr(evaluation, metric_name)
+        for evaluation in result.evaluation_results
+        if getattr(evaluation, metric_name) is not None
+    ]
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def save_results_to_json(results: List, output_path: Path, dataset_name: str) -> None:
+    """Save configuration and per-question diagnostics as JSON."""
+    payload = {
+        "dataset_name": dataset_name,
+        "results": [
+            {
+                "config": result.config.to_dict(),
+                "num_chunks": result.num_chunks,
+                "num_questions_attempted": result.num_questions_attempted,
+                "aggregated_metrics": result.aggregated_metrics.to_dict(),
+                "errors": result.error_count,
+                "notes": result.notes,
+                "questions": [
+                    {
+                        "question": evaluation.question,
+                        "expected_answer": evaluation.ground_truth_answer,
+                        "generated_answer": evaluation.generated_answer,
+                        "retrieved_chunks": evaluation.retrieved_chunks,
+                        "used_chunk_ids": evaluation.used_chunk_ids,
+                        "cited_chunk_ids": evaluation.cited_chunk_ids,
+                        "metrics": {
+                            "accuracy": evaluation.accuracy,
+                            "precision_at_k": evaluation.precision_at_k,
+                            "recall_at_k": evaluation.recall_at_k,
+                            "mrr": evaluation.mrr,
+                            "ndcg": evaluation.ndcg,
+                            "grounding_score": evaluation.grounding_score,
+                            "hallucination_rate": evaluation.hallucination_rate,
+                            "citation_coverage": evaluation.citation_coverage,
+                            "response_time": evaluation.response_time,
+                        },
+                        "metric_explanation": (
+                            "Retrieval metrics are null when the dataset does not "
+                            "provide source_text labels."
+                        ),
+                    }
+                    for evaluation in result.evaluation_results
+                ],
+            }
+            for result in results
+        ],
+    }
+    output_path.write_text(json.dumps(payload, indent=2))
+    print(f"✓ Saved JSON diagnostics to {output_path}")
 
 
 def save_results_to_markdown(
@@ -302,23 +497,33 @@ def save_results_to_markdown(
     lines.append(f"- **Dataset**: {dataset_name}\n")
     if question_count is not None:
         lines.append(f"- **Evaluation questions**: {question_count}\n")
-    lines.append("- **Vector store**: in-memory cosine similarity\n")
+    vector_stores = ", ".join(sorted({result.config.vector_store for result in results}))
+    lines.append(f"- **Vector store backend(s)**: {vector_stores or 'memory'}\n")
     lines.append("- **Retrieval options**: semantic, BM25, hybrid fusion, optional reranking\n")
+    generation_modes = ", ".join(sorted({result.config.generation_mode for result in results}))
+    lines.append(f"- **Generation mode(s)**: {generation_modes or 'retrieved_chunks'}\n")
 
     # Results table
     lines.append("\n## Results by Configuration\n")
-    lines.append("| Chunk Size | Strategy | Retrieval | Top-K | Accuracy | Precision@K | Recall@K | MRR | NDCG | Grounding | Hallucination | Resp. Time (ms) | Num Chunks |\n")
-    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+    lines.append("| Chunk Size | Strategy | Embeddings | Dim | Vector Store | Retrieval | Generation | Top-K | Accuracy | Precision@K | Recall@K | MRR | NDCG | Grounding | Hallucination | Citation Cov. | Ctx Use | Resp. Time (ms) | Num Chunks |\n")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 
     for result in results:
         config = result.config
         metrics = result.aggregated_metrics
 
         lines.append(
-            f"| {config.chunk_size} | {config.chunking_strategy} | {result.retrieval_method()} | {config.top_k} | "
-            f"{metrics.accuracy:.3f} | {metrics.precision_at_k:.3f} | "
-            f"{metrics.recall_at_k:.3f} | {metrics.mrr:.3f} | {metrics.ndcg:.3f} | "
+            f"| {config.chunk_size} | {config.chunking_strategy} | "
+            f"{config.embedding_provider}:{config.embedding_model or 'default'} | "
+            f"{config.embedding_dimension or 'unknown'} | "
+            f"{config.vector_store} | {result.retrieval_method()} | {config.generation_mode} | {config.top_k} | "
+            f"{metrics.accuracy:.3f} | "
+            f"{format_metric_short(aggregate_metric_value(result, 'precision_at_k'))} | "
+            f"{format_metric_short(aggregate_metric_value(result, 'recall_at_k'))} | "
+            f"{format_metric_short(aggregate_metric_value(result, 'mrr'))} | "
+            f"{format_metric_short(aggregate_metric_value(result, 'ndcg'))} | "
             f"{metrics.grounding_score:.3f} | {metrics.hallucination_rate:.3f} | "
+            f"{metrics.citation_coverage:.3f} | {metrics.context_usage_rate:.3f} | "
             f"{metrics.avg_response_time*1000:.1f} | "
             f"{result.num_chunks} |\n"
         )
@@ -329,17 +534,29 @@ def save_results_to_markdown(
         overall_accuracy = sum(
             result.aggregated_metrics.accuracy for result in results
         ) / len(results)
-        overall_precision = sum(
-            result.aggregated_metrics.precision_at_k for result in results
-        ) / len(results)
-        overall_recall = sum(
-            result.aggregated_metrics.recall_at_k for result in results
-        ) / len(results)
+        labeled_precision_values = [
+            value
+            for result in results
+            for value in [aggregate_metric_value(result, "precision_at_k")]
+            if value is not None
+        ]
+        labeled_recall_values = [
+            value
+            for result in results
+            for value in [aggregate_metric_value(result, "recall_at_k")]
+            if value is not None
+        ]
         overall_grounding = sum(
             result.aggregated_metrics.grounding_score for result in results
         ) / len(results)
         overall_hallucination = sum(
             result.aggregated_metrics.hallucination_rate for result in results
+        ) / len(results)
+        overall_citation_coverage = sum(
+            result.aggregated_metrics.citation_coverage for result in results
+        ) / len(results)
+        overall_context_usage = sum(
+            result.aggregated_metrics.context_usage_rate for result in results
         ) / len(results)
         overall_time = sum(
             result.aggregated_metrics.avg_response_time for result in results
@@ -348,10 +565,26 @@ def save_results_to_markdown(
         lines.append("\n## Aggregate Metrics\n")
         lines.append(f"- **Evaluated question/configuration pairs**: {total_attempted}\n")
         lines.append(f"- **Average accuracy**: {overall_accuracy:.3f}\n")
-        lines.append(f"- **Average Precision@K**: {overall_precision:.3f}\n")
-        lines.append(f"- **Average Recall@K**: {overall_recall:.3f}\n")
+        if labeled_precision_values:
+            overall_precision = sum(labeled_precision_values) / len(labeled_precision_values)
+            lines.append(f"- **Average Precision@K**: {overall_precision:.3f}\n")
+        else:
+            lines.append("- **Average Precision@K**: not_available\n")
+        if not any(
+            evaluation.precision_at_k is not None
+            for result in results
+            for evaluation in result.evaluation_results
+        ):
+            lines.append("- **Retrieval labels**: not available, so Precision@K/Recall/MRR/NDCG are reported as unavailable per question instead of forced to zero\n")
+        if labeled_recall_values:
+            overall_recall = sum(labeled_recall_values) / len(labeled_recall_values)
+            lines.append(f"- **Average Recall@K**: {overall_recall:.3f}\n")
+        else:
+            lines.append("- **Average Recall@K**: not_available\n")
         lines.append(f"- **Average grounding score**: {overall_grounding:.3f}\n")
         lines.append(f"- **Average hallucination rate**: {overall_hallucination:.3f}\n")
+        lines.append(f"- **Average citation coverage**: {overall_citation_coverage:.3f}\n")
+        lines.append(f"- **Average context usage rate**: {overall_context_usage:.3f}\n")
         lines.append(f"- **Average response time**: {overall_time*1000:.1f} ms\n")
         lines.append(f"- **Question-level errors**: {total_errors}\n")
 
@@ -444,13 +677,16 @@ def print_results_table(results: List) -> None:
         config = result.config
         metrics = result.aggregated_metrics
 
-        method = config.answer_mode
+        method = result.retrieval_method()
         if config.baseline_method:
             method = f"baseline:{config.baseline_method}"
+        elif config.generation_mode in {"grounded", "grounded_mock", "llm"}:
+            method = f"grounded:{config.llm_provider}"
 
         print(
             f"{config.chunk_size:<8} {config.chunk_overlap:<8} {config.top_k:<6} "
-            f"{metrics.accuracy:<10.3f} {metrics.precision_at_k:<10.3f} "
+            f"{metrics.accuracy:<10.3f} "
+            f"{format_metric_short(aggregate_metric_value(result, 'precision_at_k')):<10} "
             f"{metrics.grounding_score:<10.3f} {metrics.avg_response_time*1000:<10.1f} "
             f"{result.num_chunks:<8} {method:<20}"
         )
@@ -485,6 +721,15 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--download-ragbench",
+        action="store_true",
+        help=(
+            "Allow downloading vectara/open_ragbench from Hugging Face when "
+            "--open-rag-bench-path does not exist. Disabled by default so demos "
+            "fail fast and clearly offline."
+        ),
+    )
+    parser.add_argument(
         "--max-questions",
         type=int,
         default=100,
@@ -503,6 +748,12 @@ def parse_args():
         help="Run one configuration with this chunk size.",
     )
     parser.add_argument(
+        "--overlap",
+        type=int,
+        default=None,
+        help="Chunk overlap for a single configuration. Defaults to 10%% of --chunk-size.",
+    )
+    parser.add_argument(
         "--top-k",
         type=int,
         default=None,
@@ -510,9 +761,34 @@ def parse_args():
     )
     parser.add_argument(
         "--embedding-provider",
-        choices=["mock", "openai", "sentence-transformers", "huggingface", "bge", "e5"],
+        choices=[
+            "mock",
+            "openai",
+            "minilm",
+            "sentence-transformers",
+            "huggingface",
+            "bge",
+            "e5",
+        ],
         default="mock",
         help="Embedding provider to use.",
+    )
+    parser.add_argument(
+        "--embedding-model",
+        default="",
+        help="Override the default embedding model for the selected provider.",
+    )
+    parser.add_argument(
+        "--embedding-batch-size",
+        type=int,
+        default=32,
+        help="Batch size for embedding providers that support batching.",
+    )
+    parser.add_argument(
+        "--normalize-embeddings",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="L2-normalize embeddings when the provider supports it.",
     )
     parser.add_argument(
         "--chunking-strategy",
@@ -532,6 +808,34 @@ def parse_args():
         default="none",
         help="Optional reranker for hybrid retrieval experiments.",
     )
+    parser.add_argument(
+        "--vector-store",
+        choices=["memory", "faiss", "chroma", "qdrant"],
+        default="memory",
+        help="Vector database backend to use.",
+    )
+    parser.add_argument(
+        "--vector-store-path",
+        default=None,
+        help="Optional persistence path for the selected vector store.",
+    )
+    parser.add_argument(
+        "--generation-mode",
+        choices=["retrieved_chunks", "grounded", "grounded_mock", "llm"],
+        default="retrieved_chunks",
+        help="Answer generation mode.",
+    )
+    parser.add_argument(
+        "--llm-provider",
+        choices=["mock", "openai"],
+        default="mock",
+        help="LLM provider for grounded generation.",
+    )
+    parser.add_argument(
+        "--show-citations",
+        action="store_true",
+        help="Append citation markers and source list to grounded answers.",
+    )
     return parser.parse_args()
 
 
@@ -543,8 +847,8 @@ def main():
     print("SMART STUDY ASSISTANT - EXPERIMENTATION FRAMEWORK")
     print("="*70)
 
-    results_dir = Path("results")
-    results_dir.mkdir(exist_ok=True)
+    results_dir = Path("experiments") / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         if args.dataset in {"ragbench", "open-rag-bench"}:
@@ -558,7 +862,10 @@ def main():
                     limit=limit,
                 )
             else:
-                dataset = RAGBenchLoader.load(limit=limit)
+                dataset = RAGBenchLoader.load(
+                    limit=limit,
+                    allow_download=args.download_ragbench,
+                )
         else:
             dataset = DatasetLoader.load_pdf_dataset(
                 args.pdf_path,
@@ -570,7 +877,8 @@ def main():
         if args.dataset in {"ragbench", "open-rag-bench"}:
             print(
                 "  If internet access is unavailable, download vectara/open_ragbench "
-                "and point --open-rag-bench-path at official/pdf/arxiv."
+                "and point --open-rag-bench-path at official/pdf/arxiv. "
+                "To allow an online Hugging Face download, pass --download-ragbench."
             )
         return
 
@@ -578,11 +886,20 @@ def main():
     print("\n📋 Defining experiment configurations...")
     configs = define_experiments(
         embedding_provider=args.embedding_provider,
+        embedding_model=args.embedding_model,
+        embedding_batch_size=args.embedding_batch_size,
+        normalize_embeddings=args.normalize_embeddings,
         chunk_size=args.chunk_size,
+        overlap=args.overlap,
         top_k=args.top_k,
         chunking_strategy=args.chunking_strategy,
         retrieval_mode=args.retrieval_mode,
         reranker=None if args.reranker == "none" else args.reranker,
+        vector_store=args.vector_store,
+        vector_store_path=args.vector_store_path,
+        generation_mode=args.generation_mode,
+        llm_provider="mock" if args.generation_mode == "grounded_mock" else args.llm_provider,
+        show_citations=args.show_citations,
     )
     print(f"   {len(configs)} configurations defined")
 
@@ -606,9 +923,11 @@ def main():
     if args.dataset in {"ragbench", "open-rag-bench"}:
         csv_path = results_dir / "ragbench_results.csv"
         md_path = results_dir / "ragbench_summary.md"
+        json_path = results_dir / "ragbench_results.json"
     else:
         csv_path = results_dir / "experiment_results.csv"
         md_path = results_dir / "experiment_summary.md"
+        json_path = results_dir / "experiment_results.json"
 
     save_results_to_csv(results, csv_path, dataset_name=dataset.name)
     save_results_to_markdown(
@@ -618,6 +937,7 @@ def main():
         dataset_name=dataset.name,
         question_count=len(dataset.eval_questions),
     )
+    save_results_to_json(results, json_path, dataset_name=dataset.name)
 
     # Print summary
     print(comparator.generate_summary())

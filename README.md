@@ -1,98 +1,65 @@
-# Smart Study Assistant - RAG-Based PDF Learning System
+# Smart Study Assistant - RAG Research Platform
 
-## Overview
+Smart Study Assistant is a university AI project that combines a PDF study assistant with a measurable Retrieval-Augmented Generation experimentation platform. Users can upload PDFs, ask grounded questions, inspect retrieved evidence, generate quizzes, run OCR on scanned material, and benchmark RAG configurations across chunking, embeddings, retrieval, vector stores, and generation modes.
 
-Smart Study Assistant is a prototype Retrieval-Augmented Generation (RAG) system for asking questions about PDF study materials. The project extracts text from PDFs, chunks the content, embeds the chunks, retrieves relevant context, and returns an answer grounded in the retrieved material.
+The project is intentionally demo-friendly: the default path runs offline with deterministic mock embeddings and mock generation, while stronger local/paid providers can be enabled when dependencies and API keys are available.
 
-The project is currently an MVP for academic experimentation. It is designed to make RAG design choices visible and measurable, especially chunk size, chunk overlap, Top-K retrieval depth, embedding provider, retrieval quality, grounding, and response time.
+## Why This Project Matters
 
-## Problem Statement
-
-Students often need to review long PDFs, lecture notes, and technical readings quickly. Standard keyword search can miss relevant explanations when the wording differs from the student's question. This project explores how a RAG pipeline can help students ask natural-language questions and receive answers based on the source document.
+Most PDF chatbots only answer questions. This project also measures whether the system retrieved the right evidence, cited its sources, stayed grounded, and how different RAG design choices affect quality and latency. That makes it useful both as an AI tutor prototype and as a small RAG research workbench.
 
 ## Main Features
 
-- PDF text extraction using PyMuPDF with pypdf fallback
-- Configurable document chunking with overlap
-- Mock embeddings for offline reproducible experiments
-- Optional OpenAI embeddings when `OPENAI_API_KEY` is configured
-- In-memory cosine-similarity vector search
-- Retrieval service for Top-K context lookup
-- Simple QA service that builds answers from retrieved chunks
-- CLI demo
-- Simple web UI for asking questions over PDFs in `data/`
-- Experiment runner for comparing RAG configurations
-- Local evaluation dataset support
-- Vectara Open RAG Benchmark support through Hugging Face
-
-## Current Implementation Status
-
-The system works as a prototype/MVP. The default configuration uses mock embeddings so the project can run without paid APIs or internet access after dependencies are installed. Mock embeddings are deterministic and useful for testing the pipeline, but they are not semantically strong.
-
-The current vector store is an in-memory cosine-similarity store. FAISS is a reasonable future improvement, but this version does not require FAISS to run.
-
-Answers are currently based on retrieved chunks unless a future LLM generation layer is enabled. This makes the system useful for retrieval and grounding experiments, but the answers may read like excerpts rather than polished tutoring responses.
+- PDF upload and text extraction with PyMuPDF and pypdf fallback
+- Optional OCR for scanned PDFs/images with PyMuPDF, Pillow, and pytesseract
+- Configurable chunk size, overlap, and chunking strategies
+- Embedding providers: `mock`, `minilm`, `e5`, `bge`, `sentence-transformers`, and optional `openai`
+- Vector stores: persistent in-memory JSON store, FAISS, ChromaDB, and Qdrant wrappers
+- Question answering over uploaded documents
+- Grounded answers with source/page/chunk citations, confidence, and weak-context warnings
+- MCQ/quiz generation with citations, JSON export, and Markdown export
+- Local dataset and RAGBench/Open RAG Benchmark support
+- Experiment runner with CSV, JSON diagnostics, and Markdown reports
+- Retrieval diagnostics and metric explanations
+- Streamlit UI for live demos
+- Unit tests for chunking, embeddings, vector stores, retrieval, generation, OCR behavior, MCQs, and evaluation
 
 ## Architecture
 
-```text
-PDF / Benchmark Data
-        |
-        v
-PDF extraction or RAGBench loader
-        |
-        v
-ChunkService
-        |
-        v
-EmbeddingService
-        |
-        v
-VectorStoreService
-        |
-        v
-RetrievalService
-        |
-        v
-QA / Evaluation
+```mermaid
+flowchart TD
+    A[PDF / Image / Benchmark Dataset] --> B[Ingestion: PDF Loader / OCR Loader]
+    B --> C[Chunking Service]
+    C --> D[Embedding Provider]
+    D --> E[Vector Store]
+    E --> F[Retriever / Hybrid Retriever]
+    F --> G[Answer Generator]
+    F --> H[MCQ Generator]
+    G --> I[Citations + Confidence]
+    G --> J[Evaluation Metrics]
+    J --> K[CSV / JSON / Markdown Reports]
 ```
 
-## How the RAG Pipeline Works
-
-1. The system loads text from a PDF or benchmark dataset.
-2. Text is split into overlapping chunks.
-3. Each chunk is converted into an embedding vector.
-4. A question is embedded using the same embedding provider.
-5. The vector store retrieves the Top-K most similar chunks.
-6. The current QA layer returns an answer based on retrieved chunks.
-7. The experiment runner compares the generated answer and retrieved context against evaluation data.
-
-## Project Structure
+## Folder Structure
 
 ```text
-app/
-  main.py                  CLI demo
-  web.py                   Simple web UI
-core/
-  config.py                Default configuration
-  models.py                Shared data models
-data/
-  evaluation/              Local and benchmark notes
-  example.pdf              Example source PDF
-services/
-  chunk_service.py         Text chunking
-  dataset_loader.py        Local evaluation dataset loading
-  ragbench_loader.py       Vectara Open RAG Benchmark loading
-  embedding_service.py     Mock/OpenAI embeddings
-  vector_store_service.py  In-memory vector search
-  retrieval_service.py     Query retrieval
-  qa_service.py            Answer construction
-  evaluation_service.py    Metrics
-  experiment_runner.py     Experiment orchestration
-results/
-  *.csv, *.md              Experiment outputs
-main_experiment.py         Experiment CLI
-requirements.txt           Python dependencies
+app/                 CLI and lightweight app entry points
+core/                Shared models, config, errors, and types
+ingestion/           PDF, OCR, and document loaders
+chunking/            Chunking facades and strategies
+embeddings/          Provider interface, mock, SentenceTransformers, OpenAI factory
+vectorstores/        Memory, FAISS, Chroma, Qdrant backends
+retrieval/           Retriever facades, hybrid retrieval, diagnostics
+reranking/           Reranker interfaces and optional rerankers
+generation/          Prompts, grounded answers, citations, MCQs, LLM wrappers
+evaluation/          Metrics, evaluator aliases, benchmark runner, reports
+datasets/            Local and RAGBench loader facades
+services/            Backward-compatible service layer used by current CLI/tests
+ui/                  Streamlit demo app
+tests/               unittest suite
+data/                Sample PDF and local evaluation data
+experiments/results/ Generated benchmark outputs and quizzes
+main_experiment.py   Main benchmark CLI
 ```
 
 ## Installation
@@ -100,143 +67,168 @@ requirements.txt           Python dependencies
 ```bash
 python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-For OpenAI embeddings:
+For OCR, install the Tesseract system binary as well as Python packages. On Ubuntu:
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
+sudo apt-get install tesseract-ocr
+python -m pip install Pillow pytesseract
 ```
 
-## How to Run CLI Demo
+Real local embedding models require `sentence-transformers` and a first-time model download. If those models are unavailable during a run, the app prints a clear warning and falls back to deterministic mock embeddings so the demo can continue. You can also choose `--embedding-provider mock` explicitly for a fully offline run.
 
 ```bash
-python app/main.py
+python -m pip install sentence-transformers huggingface_hub
 ```
 
-## How to Run Web UI
+Optional vector database and API-backed providers can be installed only when needed:
 
 ```bash
-python app/web.py
+python -m pip install faiss-cpu chromadb qdrant-client openai datasets
 ```
 
-Then open the local URL printed by the script, usually:
+## Environment Variables
+
+Create a `.env` file if you want API-backed providers:
 
 ```text
-http://localhost:8000
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+PERPLEXITY_API_KEY=
 ```
 
-## How to Run Local Experiments
+The basic demo does not require paid APIs.
+
+## Run The Streamlit UI
 
 ```bash
-python main_experiment.py --dataset local
+python -m streamlit run ui/streamlit_app.py
 ```
 
-Run one local configuration:
+Demo flow:
+
+1. Open **Upload & Process**, use `data/example.pdf`, and process it with mock embeddings and the memory vector store.
+2. Open **Ask Questions**, ask a question, and show the grounded answer plus citation cards.
+3. Enable **Debug mode** in the sidebar to show retrieved chunks and scores.
+4. Open **Generate Quiz**, create 5 or 10 MCQs, and review citations.
+5. Open **OCR** for scanned PDFs/images if OCR dependencies are installed.
+6. Open **Experiments** after running a benchmark.
+7. Open **Retrieval Debug** to inspect chunk IDs, page numbers, metadata, and scores.
+
+## Run Experiments
+
+Local benchmark with the offline mock provider:
 
 ```bash
-python main_experiment.py --dataset local --chunk-size 500 --top-k 3
+python main_experiment.py --dataset local --chunk-size 500 --overlap 50 --top-k 3 --embedding-provider mock
 ```
 
-Results are written to:
-
-```text
-results/experiment_results.csv
-results/experiment_summary.md
-```
-
-## How to Run RAGBench Experiments
-
-Fast test with 10 examples:
+RAGBench/Open RAG Benchmark with a real local embedding provider:
 
 ```bash
-python main_experiment.py --dataset ragbench --limit 10
+python main_experiment.py --dataset ragbench --chunk-size 500 --overlap 50 --top-k 3 --embedding-provider minilm
 ```
 
-Run one RAGBench configuration:
+By default, RAGBench runs only from local files so offline demos fail fast with a
+clear message. To allow a Hugging Face download when `--open-rag-bench-path` is
+missing, add `--download-ragbench`.
+
+Grounded generation with citations and deterministic mock generation:
 
 ```bash
-python main_experiment.py --dataset ragbench --limit 50 --chunk-size 500 --top-k 3
+python main_experiment.py --dataset local --chunk-size 500 --overlap 50 --top-k 3 --generation-mode grounded_mock --show-citations
 ```
 
-If you already downloaded the dataset locally:
+Hybrid retrieval with reranking:
 
 ```bash
-python main_experiment.py \
-  --dataset ragbench \
-  --open-rag-bench-path data/open-rag-bench/pdf/arxiv \
-  --limit 50
+python main_experiment.py --dataset local --retrieval-mode hybrid --reranker heuristic
 ```
 
-Results are written to:
+Persistent memory vector store:
 
-```text
-results/ragbench_results.csv
-results/ragbench_summary.md
+```bash
+python main_experiment.py --dataset local --vector-store memory --vector-store-path experiments/results/local_vectors.json
 ```
 
-## Dataset Strategy
+Outputs are written to `experiments/results/`:
 
-The original project used a small manually written evaluation dataset. That is useful for early development, but it is limited and can be biased toward a small number of examples.
+- `experiment_results.csv`
+- `experiment_results.json`
+- `experiment_summary.md`
+- `ragbench_results.csv`
+- `ragbench_results.json`
+- `ragbench_summary.md`
+- `quiz.json`
+- `quiz.md`
 
-We use Vectara Open RAG Benchmark because it provides realistic PDF-based RAG evaluation data. It helps us test retrieval quality, grounding, chunk size, Top-K, and embedding model choices using a more objective benchmark instead of only manually written questions.
+Generated result files are ignored by Git, except for `experiments/results/.gitkeep`.
 
-Open RAG Benchmark is available from:
+## Datasets
 
-- GitHub: https://github.com/vectara/open-rag-bench
-- Hugging Face: https://huggingface.co/datasets/vectara/open_ragbench
+- `data/example.pdf`: sample PDF for demos
+- `data/evaluation/eval_dataset.json`: local question-answer evaluation set
+- RAGBench/Open RAG Benchmark: loaded from Hugging Face when available, or from a local downloaded directory passed with `--open-rag-bench-path`
 
-The benchmark includes PDF-derived scientific content, question-answer pairs, document/section relevance labels, and data involving text, tables, and image-related content. This project currently uses the text and table text portions that can be represented in the existing text-based RAG pipeline.
+If RAGBench cannot be downloaded because internet access is unavailable, the CLI fails gracefully and prints the local dataset path option.
 
-## Evaluation Metrics
+## Metrics
 
 - **Accuracy**: token-level F1 overlap between generated and expected answer
-- **Precision@K**: how often retrieved chunks contain the expected source text
-- **Grounding score**: how much of the generated answer appears in retrieved context
-- **Response time**: how long retrieval and answer construction took
+- **Precision@K**: fraction of retrieved chunks matching a labeled source span
+- **Recall@K**: whether any top-K chunk contains the labeled source span
+- **MRR**: reciprocal rank of the first relevant chunk
+- **NDCG**: ranking quality for binary relevance labels
+- **Grounding score**: answer-token overlap with retrieved context
+- **Hallucination rate**: estimated ungrounded token rate
+- **Citation coverage**: fraction of used chunks that were cited
+- **Context usage rate**: fraction of retrieved chunks used by the generator
+- **Response time**: retrieval and answer construction latency
 
-## What Works
+When source labels are missing, retrieval metrics are reported as `not_available`/`null` per question instead of being treated as zero.
 
-- End-to-end PDF question answering prototype
-- Offline experiments with mock embeddings
-- Optional OpenAI embedding support
-- Robust local evaluation loading that skips malformed records
-- RAGBench loading through Hugging Face or local downloaded files
-- Per-question CSV experiment outputs
-- Markdown summaries for reports
+## Run Tests
+
+```bash
+python -m unittest discover tests
+python -m compileall .
+```
+
+## Troubleshooting
+
+- **`sentence-transformers is not installed`**: install requirements or use `--embedding-provider mock`.
+- **Model download fails**: use mock embeddings for offline runs, or pre-download the model.
+- **`OPENAI_API_KEY is missing`**: use mock generation/embeddings or set the key in your environment.
+- **OCR returns dependency errors**: install `pytesseract`, `Pillow`, and the Tesseract system binary.
+- **RAGBench fails to load online**: download Vectara Open RAG Benchmark locally and pass `--open-rag-bench-path`.
+- **Optional vector DB import error**: install the backend package or use the default memory store.
 
 ## Current Limitations
 
-- Mock embeddings are not a replacement for real semantic embeddings
-- The vector store is in-memory and intended for small experiments
-- Answers are currently retrieved-context based, not full LLM-generated tutoring answers
-- RAGBench contains multimodal data, but this prototype primarily evaluates text/table text
-- Hugging Face dataset loading requires internet access unless the dataset is already downloaded
-- Large RAGBench runs can be slow because this MVP rebuilds embeddings for each configuration
+- Mock embeddings are deterministic and reliable for smoke tests, but not semantically strong.
+- RAGBench includes multimodal references; this project currently focuses on text/table text.
+- The grounded mock generator is deterministic and extractive, not a polished tutor LLM.
+- FAISS, Chroma, and Qdrant are optional wrappers and need their dependencies/services.
+- Large benchmark runs rebuild embeddings per configuration, so they can be slow.
 
-## Future Improvements
+## Future Work
 
-- Add FAISS or another persistent vector database
-- Add an LLM generation step for natural answers
-- Improve citation support with document IDs and section metadata
-- Add multimodal handling for RAGBench images
-- Cache embeddings between experiment runs
-- Add stronger semantic metrics such as BERTScore or LLM-as-judge evaluation
-- Add automated tests for loaders, metrics, and experiment output formats
+- Add stronger semantic evaluation such as BERTScore or LLM-as-judge rubrics
+- Add streaming answer generation and richer tutor-style explanations
+- Improve multimodal RAGBench support for image-heavy examples
+- Add saved experiment comparison views in the UI
+- Add Docker setup for one-command demos
 
-## Example Commands
+## Presentation Script
 
-```bash
-python app/main.py
-python app/web.py
-python main_experiment.py --dataset local
-python main_experiment.py --dataset local --chunk-size 300 --top-k 5
-python main_experiment.py --dataset ragbench --limit 10
-python main_experiment.py --dataset ragbench --limit 50 --embedding-provider openai
-```
+See `DEMO.md` for a concise live-demo checklist.
 
-## Team Members
-
-- Ellen Habash
-- Nechami Rabinovitz
+1. Introduce the project as an AI tutor plus RAG research platform.
+2. Upload `data/example.pdf` in Streamlit and process it.
+3. Ask a question and show the answer with citations.
+4. Expand retrieved chunks to explain grounding and retrieval scores.
+5. Generate a 5-question quiz and show JSON/Markdown export.
+6. Run a mock benchmark from the CLI.
+7. Open `experiments/results/experiment_summary.md` and explain the best configuration, metrics, limitations, and next steps.

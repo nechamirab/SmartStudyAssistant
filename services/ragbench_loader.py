@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import importlib
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +22,7 @@ class RAGBenchLoader:
     def load(
         limit: int | None = 50,
         cache_dir: str | Path | None = None,
+        allow_download: bool = False,
     ) -> ExperimentDataset:
         """
         Load and normalize the Hugging Face dataset.
@@ -28,6 +32,14 @@ class RAGBenchLoader:
         point, then fall back to snapshot_download because the dataset viewer can
         have trouble inferring mixed JSON schemas.
         """
+        allow_download = allow_download or os.getenv("SMARTSTUDY_ALLOW_RAGBENCH_DOWNLOAD") == "1"
+        if not allow_download:
+            raise DatasetLoadError(
+                "RAGBench local files were not found and online download is disabled. "
+                "Download vectara/open_ragbench locally and pass --open-rag-bench-path, "
+                "or rerun with --download-ragbench / SMARTSTUDY_ALLOW_RAGBENCH_DOWNLOAD=1."
+            )
+
         try:
             return RAGBenchLoader._load_with_datasets(limit=limit)
         except Exception as datasets_error:
@@ -51,7 +63,7 @@ class RAGBenchLoader:
 
     @staticmethod
     def _load_with_datasets(limit: int | None) -> ExperimentDataset:
-        from datasets import load_dataset
+        load_dataset = RAGBenchLoader._import_huggingface_load_dataset()
 
         dataset = load_dataset(RAGBENCH_DATASET_ID, split="train")
         rows = list(dataset.take(limit)) if limit is not None else list(dataset)
@@ -82,6 +94,38 @@ class RAGBenchLoader:
             pages=pages,
             eval_questions=eval_questions,
         )
+
+    @staticmethod
+    def _import_huggingface_load_dataset():
+        """
+        Import Hugging Face's datasets package even though this repo has a
+        local datasets/ facade package. Python resolves the local package first
+        when running from the project root, so we temporarily remove the project
+        root from sys.path for this one third-party import.
+        """
+        project_root = Path(__file__).resolve().parents[1]
+        original_path = list(sys.path)
+        local_module = sys.modules.get("datasets")
+
+        try:
+            if local_module is not None:
+                module_file = Path(getattr(local_module, "__file__", "") or "")
+                if module_file.is_relative_to(project_root):
+                    del sys.modules["datasets"]
+
+            sys.path = [
+                entry
+                for entry in sys.path
+                if entry
+                and Path(entry).resolve() != project_root
+            ]
+            module = importlib.import_module("datasets")
+            return module.load_dataset
+        finally:
+            sys.path = original_path
+            # Keep the Hugging Face package in sys.modules. Its load_dataset
+            # implementation performs follow-up absolute imports from
+            # datasets.*, which would break if we restored the local facade.
 
     @staticmethod
     def _load_from_hub_snapshot(
