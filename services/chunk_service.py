@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from chunking.strategies import ChunkingStrategyFactory, normalize_text
 from core.models import DocumentChunk, DocumentPage
 
 
@@ -7,16 +8,17 @@ class ChunkingError(Exception):
     pass
 
 
-def normalize_text(text: str) -> str:
-    return "\n".join(line.rstrip() for line in (text or "").splitlines()).strip()
-
-
 class ChunkService:
     """
     Service responsible for splitting document pages into text chunks.
     Supports overlapping chunks to preserve context between segments.
     """
-    def __init__(self, chunk_size: int, chunk_overlap: int):
+    def __init__(
+        self,
+        chunk_size: int,
+        chunk_overlap: int,
+        strategy: str = "recursive",
+    ):
         if chunk_size <= 0:
             raise ChunkingError("chunk_size must be > 0")
         if chunk_overlap < 0:
@@ -26,6 +28,8 @@ class ChunkService:
 
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.strategy_name = strategy
+        self.strategy = ChunkingStrategyFactory.create(strategy)
 
     def chunk_pages(self, pages: list[DocumentPage]) -> list[DocumentChunk]:
         """
@@ -48,32 +52,24 @@ class ChunkService:
             return []
 
         chunks: list[DocumentChunk] = []
-        start = 0
-        text_length = len(text)
-        chunk_index = 0
+        spans = self.strategy.split(text, self.chunk_size, self.chunk_overlap)
 
-        while start < text_length:
-            end = min(start + self.chunk_size, text_length)
-
-            if end < text_length:
-                cut = text.rfind(" ", start, end)
-                if cut > start + int(self.chunk_size * 0.6):
-                    end = cut
-
-            chunk_text = text[start:end].strip()
-            if chunk_text:
-                chunk_index += 1
-                chunks.append(
-                    DocumentChunk(
-                        chunk_id=f"page_{page.page_number}_chunk_{chunk_index}",
-                        page_number=page.page_number,
-                        text=chunk_text,
-                    )
+        for chunk_index, span in enumerate(spans, 1):
+            chunks.append(
+                DocumentChunk(
+                    chunk_id=f"page_{page.page_number}_chunk_{chunk_index}",
+                    page_number=page.page_number,
+                    text=span.text,
+                    source_id=page.source_id,
+                    start_char=span.start_char,
+                    end_char=span.end_char,
+                    parent_id=span.parent_id,
+                    metadata={
+                        **page.metadata,
+                        **(span.metadata or {}),
+                        "chunking_strategy": self.strategy.name,
+                    },
                 )
-
-            if end >= text_length:
-                break
-
-            start = max(0, end - self.chunk_overlap)
+            )
 
         return chunks
