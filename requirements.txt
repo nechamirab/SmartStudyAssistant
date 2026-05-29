@@ -11,6 +11,7 @@ faiss-cpu
 # PDF Processing
 PyMuPDF==1.23.8
 pypdf==4.0.0
+pytesseract==0.3.13
 
 # Text Processing & Embeddings
 nltk==3.8.1
