@@ -15,6 +15,10 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -268,7 +272,11 @@ def generate_quiz(num_questions: int) -> list[QuizQuestion]:
     if not st.session_state.pdf_loaded:
         return []
 
-    questions = QuizService.generate_from_documents(st.session_state.chunk_documents, num_questions=num_questions)
+    questions = QuizService.generate_with_openai(
+        st.session_state.chunk_documents,
+        num_questions=num_questions,
+        difficulty=st.session_state.quiz_difficulty,
+    )
     st.session_state.quiz_questions = questions
     return questions
 

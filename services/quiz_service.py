@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
 from core.models import DocumentChunk
+
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,122 @@ class QuizService:
     def generate_mcq(cls, chunks: List[DocumentChunk], num_questions: int = 3) -> List[QuizQuestion]:
         """Generate simple multiple-choice questions from legacy chunk objects."""
         return cls.generate_from_documents(chunks, num_questions=num_questions)
+
+    @classmethod
+    def generate_with_openai(
+        cls,
+        documents: List[Any],
+        num_questions: int = 5,
+        difficulty: str = "medium",
+    ) -> List[QuizQuestion]:
+        context_parts = []
+
+        for item in documents[:10]:
+            doc_data = cls._extract_doc_data(item)
+            text = (doc_data["text"] or "").strip()
+
+            if text:
+                context_parts.append(
+                    f"Source: {doc_data['source']} page {doc_data['page']}\n{text[:1200]}"
+                )
+
+        context = "\n\n".join(context_parts)
+
+        if not context:
+            return []
+
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return cls.generate_from_documents(documents, num_questions)
+
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=api_key)
+
+            prompt = f"""
+            Create {num_questions} multiple-choice quiz questions based only on the context below.
+            Difficulty: {difficulty}
+
+            Difficulty rules:
+            - easy: ask direct factual questions from the text.
+            - medium: ask questions that require understanding relationships between concepts.
+            - hard: ask scenario-based or comparison questions that require applying the document concepts.
+            Return ONLY valid JSON in this exact format:
+            [
+              {{
+                "question": "question text",
+                "options": ["option A", "option B", "option C", "option D"],
+                "answer": "the exact correct option",
+                "explanation": "short explanation",
+                "citation": "source and page"
+              }}
+            ]
+            Rules:
+            - The answer must be exactly one of the options.
+            - Do not invent information.
+            - Use only the provided context.
+            - Make the questions useful for exam preparation.
+            - Avoid repeating the same question style across difficulty levels.
+            
+            Context:
+            {context}
+            """
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                temperature=0.2,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You generate grounded study quizzes from provided document context only.",
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    },
+                ],
+            )
+
+            print("OpenAI quiz generation succeeded")
+
+            raw = response.choices[0].message.content or "[]"
+            raw = raw.strip()
+
+            if raw.startswith("```"):
+                raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+
+            data = json.loads(raw)
+
+            questions: List[QuizQuestion] = []
+            for item in data[:num_questions]:
+                options = item.get("options", [])
+                answer = item.get("answer", "")
+
+                if not item.get("question") or not options or answer not in options:
+                    continue
+
+                questions.append(
+                    QuizQuestion(
+                        prompt=item.get("question", ""),
+                        options=options,
+                        answer=answer,
+                        explanation=item.get("explanation"),
+                        citation=item.get("citation"),
+                    )
+                )
+
+            if questions:
+                return questions
+
+            return cls.generate_from_documents(documents, num_questions)
+
+
+        except Exception as exc:
+
+            print(f"OpenAI quiz generation failed: {exc}")
+
+            return cls.generate_from_documents(documents, num_questions)
+
 
     @classmethod
     def generate_from_documents(cls, documents: List[Any], num_questions: int = 3) -> List[QuizQuestion]:
