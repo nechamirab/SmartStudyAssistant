@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from chunking.strategies import ChunkingStrategyFactory, normalize_text
 from core.models import DocumentChunk, DocumentPage
 
@@ -53,11 +55,12 @@ class ChunkService:
 
         chunks: list[DocumentChunk] = []
         spans = self.strategy.split(text, self.chunk_size, self.chunk_overlap)
+        source_prefix = self._safe_source_prefix(page.source_id)
 
         for chunk_index, span in enumerate(spans, 1):
             chunks.append(
                 DocumentChunk(
-                    chunk_id=f"page_{page.page_number}_chunk_{chunk_index}",
+                    chunk_id=f"{source_prefix}_page_{page.page_number}_chunk_{chunk_index}",
                     page_number=page.page_number,
                     text=span.text,
                     source_id=page.source_id,
@@ -73,3 +76,8 @@ class ChunkService:
             )
 
         return chunks
+
+    @staticmethod
+    def _safe_source_prefix(source_id: str) -> str:
+        safe = re.sub(r"[^A-Za-z0-9]+", "_", source_id or "document").strip("_").lower()
+        return safe or "document"

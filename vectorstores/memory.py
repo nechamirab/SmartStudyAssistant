@@ -13,9 +13,8 @@ class InMemoryVectorStore:
     """
     Dependency-free cosine-similarity store.
 
-    It is useful for deterministic tests and small experiments, and it can be
-    persisted to JSON so benchmark runs are reproducible without external
-    services.
+    It is useful for course demos and local testing. The Streamlit app keeps
+    this index in memory, so uploaded PDFs must be processed again after restart.
     """
 
     backend_name = "memory"
@@ -32,7 +31,7 @@ class InMemoryVectorStore:
 
     @property
     def chunks(self) -> list[DocumentChunk]:
-        """Expose indexed chunks for hybrid retrieval diagnostics."""
+        """Expose indexed chunks for source inspection."""
         return self._chunks.copy()
 
     def add(
@@ -143,7 +142,7 @@ class InMemoryVectorStore:
             self._vectors.append([float(value) for value in record.get("vector", [])])
 
     def stats(self) -> VectorStoreStats:
-        """Return store statistics for observability and dashboards."""
+        """Return store statistics for source inspection and debugging."""
         return VectorStoreStats(
             backend=self.backend_name,
             collection=self.collection_name,

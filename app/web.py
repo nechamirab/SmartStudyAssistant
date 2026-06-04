@@ -1,434 +1,225 @@
 from __future__ import annotations
 
-import html
+import base64
+import cgi
 import json
 import logging
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
-from core.config import CHUNK_OVERLAP, CHUNK_SIZE
-from services.chunk_service import ChunkService
-from services.embedding_service import EmbeddingService
-from services.pdf_service import PdfService
-from services.retrieval_service import RetrievalService
-from services.vector_store_service import VectorStoreService
+from services.exam_service import ExamGenerationError, ExamRequest, FullExamService
+from services.rag_service import PDFIndex, PDFRAGService, RAGPipelineError
+from services.pdf_service import OCRMode, PdfService
 
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
 
 
 @dataclass
-class AssistantIndex:
-    pdf_name: str
-    page_count: int
-    chunk_count: int
-    retrieval_service: RetrievalService
+class AppState:
+    index: PDFIndex | None = None
 
 
-class SmartStudyApp:
+class SmartStudyAPI:
     def __init__(self) -> None:
-        self._indexes: dict[str, AssistantIndex] = {}
+        self._state = AppState()
         self._lock = threading.Lock()
+        self._rag = PDFRAGService()
+        self._exam = FullExamService()
 
-    @property
-    def pdfs(self) -> list[Path]:
-        return sorted(Path("data").glob("*.pdf"))
-
-    def get_index(self, pdf_name: str) -> AssistantIndex:
-        pdf_path = Path("data") / pdf_name
-        if not pdf_path.exists() or pdf_path.suffix.lower() != ".pdf":
-            raise ValueError("Choose one of the PDFs in the data folder.")
-
+    def upload_pdf(self, filename: str, pdf_bytes: bytes, ocr_mode: OCRMode = "auto") -> dict:
         with self._lock:
-            if pdf_name in self._indexes:
-                return self._indexes[pdf_name]
+            self._state.index = self._rag.build_index_from_upload(pdf_bytes, filename, ocr_mode=ocr_mode)
+            return {"ok": True, "index": self._state.index.to_summary()}
 
-            pdf_service = PdfService()
-            chunk_service = ChunkService(
-                chunk_size=CHUNK_SIZE,
-                chunk_overlap=CHUNK_OVERLAP,
-            )
-            embedding_service = EmbeddingService()
-            vector_store = VectorStoreService()
+    def upload_pdfs(self, uploads: list[tuple[str, bytes]], ocr_mode: OCRMode = "auto") -> dict:
+        with self._lock:
+            self._state.index = self._rag.build_index_from_uploads(uploads, ocr_mode=ocr_mode)
+            return {"ok": True, "index": self._state.index.to_summary()}
 
-            pages = pdf_service.extract_pages(pdf_path)
-            chunks = chunk_service.chunk_pages(pages)
-            embeddings = embedding_service.embed_texts(chunks)
-            vector_store.add(chunks, embeddings)
+    def ask(self, question: str) -> dict:
+        index = self._require_index()
+        return self._rag.answer(index, question).to_dict()
 
-            index = AssistantIndex(
-                pdf_name=pdf_name,
-                page_count=len(pages),
-                chunk_count=len(chunks),
-                retrieval_service=RetrievalService(
-                    embedding_service=embedding_service,
-                    vector_store=vector_store,
-                ),
-            )
-            self._indexes[pdf_name] = index
-            return index
+    def generate_exam(self, payload: dict) -> dict:
+        index = self._require_index()
+        question_types = payload.get("question_types", [])
+        if isinstance(question_types, str):
+            question_types = [question_types]
+        request = ExamRequest(
+            number_of_questions=int(payload.get("number_of_questions", payload.get("question_count", 10))),
+            question_types=list(question_types),
+            difficulty=str(payload.get("difficulty", "mixed")),
+            include_answer_key=self._bool_payload(payload.get("include_answer_key", True)),
+            multiple_choice=int(payload["multiple_choice"]) if "multiple_choice" in payload else None,
+            open_questions=int(payload["open_questions"]) if "open_questions" in payload else None,
+            true_false=int(payload["true_false"]) if "true_false" in payload else None,
+            short_answer=int(payload["short_answer"]) if "short_answer" in payload else None,
+        )
+        return {"ok": True, "exam": self._exam.generate_exam(index, request)}
 
-    def answer(self, pdf_name: str, question: str, top_k: int) -> dict:
-        question = question.strip()
-        if not question:
-            raise ValueError("Ask a question first.")
-
-        index = self.get_index(pdf_name)
-        response = index.retrieval_service.retrieve(question, top_k=top_k)
-        source_texts = [result.chunk.text for result in response.results]
-        answer = "Based on the document:\n\n" + "\n\n".join(source_texts)[:900]
-
+    def sources(self) -> dict:
+        index = self._require_index()
         return {
-            "answer": answer,
-            "pdf": index.pdf_name,
-            "pages": index.page_count,
-            "chunks": index.chunk_count,
-            "sources": [
+            "pdf_name": index.pdf_name,
+            "chunks": [
                 {
-                    "page": result.chunk.page_number,
-                    "score": round(result.score, 3),
-                    "text": result.chunk.text,
+                    "pdf_name": chunk.source_id or index.pdf_name,
+                    "page_number": chunk.page_number,
+                    "chunk_id": chunk.chunk_id,
+                    "text": chunk.text,
                 }
-                for result in response.results
+                for chunk in index.chunks
             ],
         }
 
+    def status(self) -> dict:
+        if not self._state.index:
+            return {"ok": True, "indexed": False}
+        return {"ok": True, "indexed": True, "index": self._state.index.to_summary()}
 
-APP = SmartStudyApp()
+    def _require_index(self) -> PDFIndex:
+        if not self._state.index:
+            raise RAGPipelineError("Upload and process a PDF before using this endpoint.")
+        return self._state.index
+
+    @staticmethod
+    def _bool_payload(value) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() not in {"false", "0", "no", "off"}
+        return bool(value)
+
+
+APP = SmartStudyAPI()
 
 
 class RequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
-        if path == "/":
-            self._send_html(render_page(APP.pdfs))
-            return
-
         if path == "/health":
             self._send_json({"ok": True})
             return
-
+        if path == "/api/status":
+            self._send_json(APP.status())
+            return
+        if path == "/api/sources":
+            self._handle_json_call(APP.sources)
+            return
         self.send_error(404)
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if path != "/api/ask":
-            self.send_error(404)
+        if path == "/api/upload":
+            self._handle_upload()
             return
-
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length) or b"{}")
-            result = APP.answer(
-                pdf_name=str(payload.get("pdf", "")),
-                question=str(payload.get("question", "")),
-                top_k=int(payload.get("top_k", 3)),
-            )
-            self._send_json(result)
-        except Exception as exc:
-            self._send_json({"error": str(exc)}, status=400)
+        if path == "/api/ask":
+            payload = self._read_json()
+            self._handle_json_call(lambda: APP.ask(str(payload.get("question", ""))))
+            return
+        if path == "/api/exam":
+            payload = self._read_json()
+            self._handle_json_call(lambda: APP.generate_exam(payload))
+            return
+        if path in {"/api/generate-exam", "/api/generate-quiz", "/generate-exam", "/generate-quiz"}:
+            payload = self._read_json()
+            self._handle_json_call(lambda: APP.generate_exam(payload))
+            return
+        self.send_error(404)
 
     def log_message(self, format: str, *args) -> None:
         return
 
-    def _send_html(self, body: str, status: int = 200) -> None:
-        encoded = body.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
+    def _handle_upload(self) -> None:
+        try:
+            uploads, ocr_mode = self._read_upload_request()
+            self._send_json(APP.upload_pdfs(uploads, ocr_mode=ocr_mode))
+        except (RAGPipelineError, ValueError) as exc:
+            self._send_json({"ok": False, "error": str(exc)}, status=400)
+
+    def _handle_json_call(self, callback) -> None:
+        try:
+            self._send_json(callback())
+        except (RAGPipelineError, ExamGenerationError, ValueError) as exc:
+            self._send_json({"ok": False, "error": str(exc)}, status=400)
+
+    def _read_upload_request(self) -> tuple[list[tuple[str, bytes]], OCRMode]:
+        content_type = self.headers.get("Content-Type", "")
+        if content_type.startswith("multipart/form-data"):
+            form = cgi.FieldStorage(
+                fp=self.rfile,
+                headers=self.headers,
+                environ={
+                    "REQUEST_METHOD": "POST",
+                    "CONTENT_TYPE": content_type,
+                },
+            )
+            file_items = form["file"] if "file" in form else None
+            if file_items is None:
+                raise ValueError("Upload field 'file' is required.")
+            if not isinstance(file_items, list):
+                file_items = [file_items]
+            uploads = [
+                (file_item.filename, file_item.file.read())
+                for file_item in file_items
+                if getattr(file_item, "filename", "")
+            ]
+            if not uploads:
+                raise ValueError("Upload field 'file' is required.")
+            ocr_mode = self._normalize_ocr_mode(form.getfirst("ocr_mode", "auto"))
+            return uploads, ocr_mode
+
+        payload = self._read_json()
+        ocr_mode = self._normalize_ocr_mode(payload.get("ocr_mode", "auto"))
+        files = payload.get("files") or payload.get("pdfs")
+        if isinstance(files, list):
+            uploads = []
+            for item in files:
+                if not isinstance(item, dict):
+                    raise ValueError("Each file entry must be an object.")
+                filename = str(item.get("filename", "uploaded.pdf"))
+                encoded = str(item.get("pdf_base64", ""))
+                if not encoded:
+                    raise ValueError("Each file entry requires pdf_base64.")
+                uploads.append((filename, base64.b64decode(encoded)))
+            return uploads, ocr_mode
+
+        filename = str(payload.get("filename", "uploaded.pdf"))
+        encoded = str(payload.get("pdf_base64", ""))
+        if not encoded:
+            raise ValueError("Provide pdf_base64 or multipart field 'file'.")
+        return [(filename, base64.b64decode(encoded))], ocr_mode
+
+    def _read_json(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length)
+        return json.loads(raw or b"{}")
 
     def _send_json(self, body: dict, status: int = 200) -> None:
-        encoded = json.dumps(body).encode("utf-8")
+        encoded = json.dumps(body, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
 
-
-def render_page(pdfs: list[Path]) -> str:
-    options = "\n".join(
-        f'<option value="{html.escape(pdf.name)}">{html.escape(pdf.name)}</option>'
-        for pdf in pdfs
-    )
-
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Smart Study Assistant</title>
-  <style>
-    :root {{
-      color-scheme: light;
-      --bg: #f6f7f2;
-      --ink: #171812;
-      --muted: #61665a;
-      --panel: #ffffff;
-      --line: #d9ddcf;
-      --accent: #256d5a;
-      --accent-strong: #174b3e;
-      --warm: #e46f44;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }}
-
-    * {{ box-sizing: border-box; }}
-
-    body {{
-      margin: 0;
-      min-height: 100vh;
-      background: var(--bg);
-      color: var(--ink);
-    }}
-
-    .shell {{
-      width: min(1120px, calc(100% - 32px));
-      margin: 0 auto;
-      padding: 32px 0;
-    }}
-
-    header {{
-      display: flex;
-      justify-content: space-between;
-      gap: 20px;
-      align-items: end;
-      margin-bottom: 24px;
-    }}
-
-    h1 {{
-      margin: 0;
-      font-size: clamp(2rem, 5vw, 4rem);
-      line-height: 1;
-      letter-spacing: 0;
-    }}
-
-    .subhead {{
-      margin: 10px 0 0;
-      color: var(--muted);
-      max-width: 680px;
-      font-size: 1rem;
-      line-height: 1.5;
-    }}
-
-    .status {{
-      color: var(--accent-strong);
-      border: 1px solid var(--line);
-      padding: 10px 12px;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.62);
-      white-space: nowrap;
-      font-size: 0.92rem;
-    }}
-
-    main {{
-      display: grid;
-      grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
-      gap: 18px;
-      align-items: start;
-    }}
-
-    .panel {{
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 18px;
-      box-shadow: 0 14px 32px rgba(23, 24, 18, 0.07);
-    }}
-
-    label {{
-      display: block;
-      font-weight: 700;
-      margin-bottom: 8px;
-    }}
-
-    select, textarea, input {{
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      font: inherit;
-      color: var(--ink);
-      background: white;
-    }}
-
-    textarea {{
-      min-height: 160px;
-      resize: vertical;
-      line-height: 1.45;
-    }}
-
-    .field {{ margin-bottom: 16px; }}
-
-    .row {{
-      display: grid;
-      grid-template-columns: 1fr 96px;
-      gap: 12px;
-      align-items: end;
-    }}
-
-    button {{
-      width: 100%;
-      border: 0;
-      border-radius: 8px;
-      padding: 13px 14px;
-      color: white;
-      background: var(--accent);
-      font: inherit;
-      font-weight: 800;
-      cursor: pointer;
-    }}
-
-    button:hover {{ background: var(--accent-strong); }}
-    button:disabled {{ opacity: 0.64; cursor: wait; }}
-
-    .answer {{
-      min-height: 260px;
-      white-space: pre-wrap;
-      line-height: 1.55;
-      font-size: 1rem;
-    }}
-
-    .meta {{
-      color: var(--muted);
-      margin-bottom: 14px;
-      font-size: 0.92rem;
-    }}
-
-    .sources {{
-      display: grid;
-      gap: 12px;
-      margin-top: 16px;
-    }}
-
-    .source {{
-      border-top: 1px solid var(--line);
-      padding-top: 12px;
-    }}
-
-    .source strong {{
-      display: block;
-      color: var(--warm);
-      margin-bottom: 6px;
-    }}
-
-    .source p {{
-      margin: 0;
-      color: #30332b;
-      line-height: 1.45;
-    }}
-
-    @media (max-width: 820px) {{
-      header {{ align-items: start; flex-direction: column; }}
-      main {{ grid-template-columns: 1fr; }}
-      .status {{ white-space: normal; }}
-    }}
-  </style>
-</head>
-<body>
-  <div class="shell">
-    <header>
-      <div>
-        <h1>Smart Study Assistant</h1>
-        <p class="subhead">Ask questions against the PDFs in <code>data/</code>. This uses the project’s current mock embeddings, so treat the answer as a retrieval demo.</p>
-      </div>
-      <div class="status" id="status">Ready</div>
-    </header>
-
-    <main>
-      <section class="panel">
-        <div class="field">
-          <label for="pdf">PDF</label>
-          <select id="pdf">{options}</select>
-        </div>
-
-        <div class="field">
-          <label for="question">Question</label>
-          <textarea id="question">What is machine learning?</textarea>
-        </div>
-
-        <div class="row">
-          <div class="field">
-            <label for="topK">Sources</label>
-            <input id="topK" type="number" min="1" max="8" value="3">
-          </div>
-          <button id="ask">Ask</button>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="meta" id="meta">No answer yet.</div>
-        <div class="answer" id="answer">Choose a PDF, ask a question, and the retrieved chunks will appear here.</div>
-        <div class="sources" id="sources"></div>
-      </section>
-    </main>
-  </div>
-
-  <script>
-    const askButton = document.getElementById("ask");
-    const statusEl = document.getElementById("status");
-    const metaEl = document.getElementById("meta");
-    const answerEl = document.getElementById("answer");
-    const sourcesEl = document.getElementById("sources");
-
-    function escapeText(value) {{
-      return String(value).replace(/[&<>"']/g, (char) => ({{
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        "\\"": "&quot;",
-        "'": "&#039;"
-      }}[char]));
-    }}
-
-    askButton.addEventListener("click", async () => {{
-      askButton.disabled = true;
-      statusEl.textContent = "Indexing and searching...";
-      sourcesEl.innerHTML = "";
-
-      try {{
-        const response = await fetch("/api/ask", {{
-          method: "POST",
-          headers: {{ "Content-Type": "application/json" }},
-          body: JSON.stringify({{
-            pdf: document.getElementById("pdf").value,
-            question: document.getElementById("question").value,
-            top_k: Number(document.getElementById("topK").value || 3)
-          }})
-        }});
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Request failed");
-
-        metaEl.textContent = `${{data.pdf}} · ${{data.pages}} pages · ${{data.chunks}} chunks`;
-        answerEl.textContent = data.answer;
-        sourcesEl.innerHTML = data.sources.map((source, index) => `
-          <article class="source">
-            <strong>Source ${{index + 1}} · page ${{source.page}} · score ${{source.score}}</strong>
-            <p>${{escapeText(source.text.slice(0, 520))}}</p>
-          </article>
-        `).join("");
-        statusEl.textContent = "Ready";
-      }} catch (error) {{
-        metaEl.textContent = "Something went wrong.";
-        answerEl.textContent = error.message;
-        statusEl.textContent = "Error";
-      }} finally {{
-        askButton.disabled = false;
-      }}
-    }});
-  </script>
-</body>
-</html>"""
+    @staticmethod
+    def _normalize_ocr_mode(value) -> OCRMode:
+        try:
+            return PdfService._normalize_ocr_mode(str(value or "auto"))
+        except Exception as exc:
+            raise ValueError(str(exc)) from exc
 
 
-def main() -> None:
-    server = ThreadingHTTPServer(("0.0.0.0", 8501), RequestHandler)
-    print("Smart Study Assistant front end: http://localhost:8501")
+def run(host: str = "127.0.0.1", port: int = 8000) -> None:
+    server = ThreadingHTTPServer((host, port), RequestHandler)
+    print(f"Smart Study Assistant API running at http://{host}:{port}")
     server.serve_forever()
 
 
 if __name__ == "__main__":
-    main()
+    run()

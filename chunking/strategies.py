@@ -236,7 +236,7 @@ class SemanticChunker(ChunkingStrategy):
 
 
 class ChunkingStrategyFactory:
-    """Factory for named chunking strategies used in experiments."""
+    """Factory for named chunking strategies used by the PDF RAG pipeline."""
 
     STRATEGIES = {
         "recursive": RecursiveCharacterTextSplitter,

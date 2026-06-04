@@ -3,11 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from vectorstores.base import BaseVectorStore, VectorStoreError
+from vectorstores.faiss_store import FaissVectorStore
 from vectorstores.memory import InMemoryVectorStore
 
 
 class VectorStoreFactory:
-    """Create vector store backends by name."""
+    """Create the single vector store used by the demo."""
 
     @staticmethod
     def create(
@@ -21,28 +22,12 @@ class VectorStoreFactory:
                 collection_name=collection_name,
                 persist_path=persist_path,
             )
-        if normalized == "faiss":
-            from vectorstores.faiss_store import FaissVectorStore
-
+        if normalized in {"faiss", "faiss-cpu"}:
             return FaissVectorStore(
-                collection_name=collection_name,
-                persist_path=persist_path,
-            )
-        if normalized == "chroma":
-            from vectorstores.chroma_store import ChromaVectorStore
-
-            return ChromaVectorStore(
-                collection_name=collection_name,
-                persist_path=persist_path,
-            )
-        if normalized == "qdrant":
-            from vectorstores.qdrant_store import QdrantVectorStore
-
-            return QdrantVectorStore(
                 collection_name=collection_name,
                 persist_path=persist_path,
             )
         raise VectorStoreError(
             f"Unsupported vector store backend: {backend}. "
-            "Supported backends: memory, faiss, chroma, qdrant."
+            "Supported backends: memory, faiss."
         )

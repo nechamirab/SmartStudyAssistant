@@ -1,74 +1,47 @@
-from core.config import CHUNK_OVERLAP, CHUNK_SIZE
-from services.chunk_service import ChunkService
-from services.embedding_service import EmbeddingService
-from services.pdf_service import PdfService
-from services.retrieval_service import RetrievalService
-from services.vector_store_service import VectorStoreService
-from services.qa_service import QAService
-from services.quiz_service import QuizService
+from __future__ import annotations
+
 from pathlib import Path
 
-def main():
-    """
-    Run full pipeline:
-    PDF → chunks → embeddings → vector store → retrieval → QA
-    """
+from services.exam_service import ExamGenerationError, ExamRequest, FullExamService
+from services.rag_service import PDFRAGService
 
-    pdf_service = PdfService()
-    chunk_service = ChunkService(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-    )
-    embedding_service = EmbeddingService()
-    vector_store = VectorStoreService()
 
+def main() -> None:
     project_root = Path(__file__).resolve().parent.parent
     pdf_path = project_root / "data" / "example.pdf"
 
-    pages = pdf_service.extract_pages(pdf_path)
-    chunks = chunk_service.chunk_pages(pages)
-    embeddings = embedding_service.embed_texts(chunks)
+    rag = PDFRAGService()
+    index = rag.build_index_from_upload(pdf_path.read_bytes(), pdf_path.name)
 
-    vector_store.add(chunks, embeddings)
+    print("=== PDF INDEX ===")
+    print(index.to_summary())
 
-    retrieval_service = RetrievalService(
-        embedding_service=embedding_service,
-        vector_store=vector_store,
-    )
+    question = "What does Game Theory study?"
+    answer = rag.answer(index, question)
 
-    qa_service = QAService(retrieval_service)
-
-    query = "What is the lecture about?"
-    qa_response = qa_service.answer(query)
+    print("\n=== GROUNDED ANSWER ===")
+    print(f"Question: {question}")
+    print(answer.answer)
 
     print("\n=== SOURCES ===")
-    for i, page in enumerate(qa_response.sources, start=1):
-        print(f"\n--- Source {i} (Page {page}) ---")
+    for source in answer.sources:
+        print(
+            f"{source.pdf_name} | page {source.page_number} | "
+            f"{source.chunk_id} | score={source.score:.4f}"
+        )
 
-    print(f"Pages extracted: {len(pages)}")
-    print(f"Chunks created: {len(chunks)}")
-    print(f"Embeddings created: {len(embeddings)}")
-
-    print("\n=== ANSWER ===")
-    print(f"Query: {qa_response.query}")
-    print("\nAnswer:")
-    print(qa_response.answer)
-
-    print("\n=== QUIZ ===")
-
-    quiz_service = QuizService(retrieval_service)
-
-    quiz_questions = quiz_service.generate_quiz(
-        topic="Sequential games",
-        num_questions=3,
-    )
-
-    for i, q in enumerate(quiz_questions, start=1):
-        print(f"\nQuestion {i}:")
-        print(q.question)
-
-        print("Answer:")
-        print(q.answer)
+    print("\n=== AI QUIZ / EXAM PREVIEW ===")
+    try:
+        exam = FullExamService().generate_exam(
+            index,
+            ExamRequest(
+                number_of_questions=4,
+                question_types=["multiple_choice", "open_question", "true_false", "short_answer"],
+            ),
+        )
+        print(exam)
+    except ExamGenerationError as exc:
+        print(exc)
 
 
 if __name__ == "__main__":

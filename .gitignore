@@ -1,5 +1,7 @@
 venv/
 .env
+API.txt
+config/groq_api_key.txt
 __pycache__/
 *.pyc
 .DS_Store
@@ -10,8 +12,3 @@ data/open-rag-bench/
 .vectorstores/
 vector_index/
 uploads/
-ocr_uploads/
-experiments/results/*.json
-experiments/results/*.csv
-experiments/results/*.md
-!experiments/results/.gitkeep

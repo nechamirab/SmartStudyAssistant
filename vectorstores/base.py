@@ -22,7 +22,7 @@ class SearchResult:
 
 @dataclass(frozen=True)
 class VectorStoreStats:
-    """Operational statistics for dashboards and benchmark reports."""
+    """Operational statistics for source inspection and debugging."""
 
     backend: str
     collection: str
@@ -39,7 +39,7 @@ class BaseVectorStore(Protocol):
 
     @property
     def chunks(self) -> list[DocumentChunk]:
-        """Return indexed chunks for diagnostics and lexical retrieval."""
+        """Return indexed chunks for source inspection."""
 
     def add(
         self,

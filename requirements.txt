@@ -1,21 +1,15 @@
 streamlit
 PyMuPDF
 pypdf
+pytesseract
+Pillow
 numpy
+sentence-transformers
+faiss-cpu
 
-# Optional real embedding providers:
-# sentence-transformers
-# huggingface_hub
+# Optional alternate embedding providers:
 # openai
+# huggingface_hub
 
-# Optional benchmark downloader:
-# datasets
-
-# Optional vector database backends:
-# faiss-cpu
-# chromadb
-# qdrant-client
-
-# Optional OCR support:
-# Pillow
-# pytesseract
+# Optional OCR provider for harder handwriting cases:
+# easyocr

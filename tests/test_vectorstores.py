@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import importlib.util
 from pathlib import Path
 
 from core.models import DocumentChunk
@@ -88,6 +89,25 @@ class InMemoryVectorStoreTests(unittest.TestCase):
 
         self.assertEqual(loaded.stats().num_vectors, 2)
         self.assertEqual(loaded.search([1.0, 0.0], top_k=1)[0].chunk.chunk_id, "a")
+
+    @unittest.skipUnless(importlib.util.find_spec("faiss"), "faiss-cpu is not installed")
+    def test_faiss_search_orders_by_cosine_similarity(self):
+        store = VectorStoreFactory.create("faiss", collection_name="test")
+        chunks = [
+            DocumentChunk(chunk_id="a", page_number=1, text="alpha", source_id="a.pdf"),
+            DocumentChunk(chunk_id="b", page_number=1, text="beta", source_id="b.pdf"),
+        ]
+        store.add(
+            chunks,
+            [
+                EmbeddingResult(chunk_id="a", vector=[1.0, 0.0]),
+                EmbeddingResult(chunk_id="b", vector=[0.0, 1.0]),
+            ],
+        )
+
+        results = store.search([0.9, 0.1], top_k=1)
+
+        self.assertEqual(results[0].chunk.chunk_id, "a")
 
 
 if __name__ == "__main__":
