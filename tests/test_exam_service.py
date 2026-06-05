@@ -1,4 +1,3 @@
-import types
 import unittest
 import urllib.error
 from unittest.mock import patch
@@ -101,12 +100,19 @@ class FullExamServiceTests(unittest.TestCase):
         self.assertEqual(exam["answer_key"][0]["source_references"][0]["page_number"], 1)
 
     def test_groq_limit_error_has_required_message(self):
+        class FakeErrorBody:
+            def read(self):
+                return b'{"error":{"message":"rate limit"}}'
+
+            def close(self):
+                return None
+
         error = urllib.error.HTTPError(
             url="https://api.groq.com/openai/v1/chat/completions",
             code=429,
             msg="Too Many Requests",
             hdrs=None,
-            fp=types.SimpleNamespace(read=lambda: b'{"error":{"message":"rate limit"}}'),
+            fp=FakeErrorBody(),
         )
         with patch("urllib.request.urlopen", side_effect=error):
             with self.assertRaisesRegex(
@@ -114,6 +120,34 @@ class FullExamServiceTests(unittest.TestCase):
                 "Groq free API limit reached. Please try again later or reduce the number of questions.",
             ):
                 FullExamService()._generate_with_groq("prompt", "test-key")
+
+    def test_malformed_ai_final_exam_can_fall_back_without_crashing(self):
+        with patch("services.exam_service.read_groq_api_key", return_value="test-key"):
+            with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("bad response")):
+                exam = FullExamService().generate_exam_with_fallback(
+                    self._index(),
+                    ExamRequest(number_of_questions=2, question_types=["short_answer"]),
+                )
+
+        self.assertTrue(exam["fallback_used"])
+        self.assertEqual(len(exam["questions"]), 2)
+        self.assertTrue(exam["questions"][0]["source_references"])
+
+    def test_incomplete_ai_payload_is_normalized(self):
+        payload = FullExamService._normalize_payload(
+            {
+                "questions": [
+                    {
+                        "question": "What do grounded systems cite?",
+                        "source_references": [{"page_number": 1, "chunk_id": "rag_pdf_page_1_chunk_1"}],
+                    }
+                ]
+            }
+        )
+
+        self.assertEqual(payload["questions"][0]["id"], 1)
+        self.assertEqual(payload["questions"][0]["type"], "short_answer")
+        self.assertEqual(payload["questions"][0]["source_references"][0]["label"], "Source: Page 1")
 
 
 if __name__ == "__main__":

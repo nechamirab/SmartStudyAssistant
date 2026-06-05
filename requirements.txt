@@ -1,5 +1,6 @@
 streamlit
-PyMuPDF
+streamlit-autorefresh
+pymupdf
 pypdf
 pytesseract
 Pillow

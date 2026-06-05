@@ -9,6 +9,7 @@ from pathlib import Path
 from core.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
+    CHUNKING_STRATEGY,
     EMBEDDING_MODEL,
     EMBEDDING_PROVIDER,
     MIN_RETRIEVAL_SCORE,
@@ -21,6 +22,7 @@ from services.chunk_service import ChunkService, ChunkingError
 from services.embedding_service import EmbeddingError, EmbeddingService
 from services.pdf_service import OCRMode, PdfExtractionError, PdfService
 from services.retrieval_service import RetrievalError, RetrievalService
+from services.source_utils import format_source_label, sanitize_visible_text
 from services.vector_store_service import SearchResult
 from vectorstores.base import VectorStoreError
 from vectorstores.factory import VectorStoreFactory
@@ -37,6 +39,18 @@ class SourceReference:
     chunk_id: str
     score: float
     text: str
+    section_title: str = ""
+
+    def label(self, debug: bool = False) -> str:
+        return format_source_label(
+            {
+                "pdf_name": self.pdf_name,
+                "page_number": self.page_number,
+                "chunk_id": self.chunk_id,
+                "section_title": self.section_title,
+            },
+            debug=debug,
+        )
 
     def to_dict(self) -> dict:
         return {
@@ -45,6 +59,8 @@ class SourceReference:
             "chunk_id": self.chunk_id,
             "score": round(float(self.score), 4),
             "text": self.text,
+            "section_title": self.section_title,
+            "label": self.label(),
         }
 
 
@@ -55,6 +71,7 @@ class RAGAnswer:
     sources: list[SourceReference]
     found: bool
     confidence: float
+    confidence_label: str = "Low"
 
     def to_dict(self) -> dict:
         return {
@@ -62,6 +79,7 @@ class RAGAnswer:
             "answer": self.answer,
             "found": self.found,
             "confidence": self.confidence,
+            "confidence_label": self.confidence_label,
             "sources": [source.to_dict() for source in self.sources],
         }
 
@@ -158,6 +176,7 @@ class PDFRAGService:
         self,
         chunk_size: int = CHUNK_SIZE,
         chunk_overlap: int = CHUNK_OVERLAP,
+        chunking_strategy: str = CHUNKING_STRATEGY,
         top_k: int = RETRIEVAL_TOP_K,
         min_score: float = MIN_RETRIEVAL_SCORE,
         embedding_provider: str = EMBEDDING_PROVIDER,
@@ -166,6 +185,7 @@ class PDFRAGService:
     ) -> None:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.chunking_strategy = chunking_strategy
         self.top_k = top_k
         self.min_score = min_score
         self.embedding_provider = embedding_provider
@@ -234,7 +254,7 @@ class PDFRAGService:
             raise RAGPipelineError("The PDF does not contain extractable text.")
 
         try:
-            chunks = ChunkService(self.chunk_size, self.chunk_overlap).chunk_pages(pages)
+            chunks = ChunkService(self.chunk_size, self.chunk_overlap, strategy=self.chunking_strategy).chunk_pages(pages)
         except ChunkingError as exc:
             raise RAGPipelineError(f"Chunking failed: {exc}") from exc
 
@@ -270,17 +290,28 @@ class PDFRAGService:
             retrieval_service=retrieval_service,
         )
 
-    def answer(self, index: PDFIndex, question: str, top_k: int | None = None) -> RAGAnswer:
+    def answer(
+        self,
+        index: PDFIndex,
+        question: str,
+        top_k: int | None = None,
+        metadata_filter: dict | None = None,
+    ) -> RAGAnswer:
         question = (question or "").strip()
         if not question:
             raise RAGPipelineError("Enter a question to ask the PDF.")
 
         try:
-            response = index.retrieval_service.retrieve(question, top_k=top_k or self.top_k)
+            response = index.retrieval_service.retrieve(
+                question,
+                top_k=top_k or self.top_k,
+                metadata_filter=metadata_filter,
+            )
         except RetrievalError as exc:
             raise RAGPipelineError(f"Retrieval failed: {exc}") from exc
 
         relevant = self._relevant_results(question, response.results)
+        relevant = self._rerank_results(question, relevant)
         sources = [self._source_from_result(index.pdf_name, result) for result in relevant]
         if not relevant:
             return RAGAnswer(
@@ -289,17 +320,74 @@ class PDFRAGService:
                 sources=[],
                 found=False,
                 confidence=0.0,
+                confidence_label="Low",
             )
 
         answer = self._generate_grounded_answer(question, sources)
         confidence = max(source.score for source in sources) if sources else 0.0
+        confidence_label = self._confidence_label(confidence, len(sources))
+        if confidence_label == "Low":
+            return RAGAnswer(
+                question=question,
+                answer=NOT_FOUND_ANSWER,
+                sources=sources,
+                found=False,
+                confidence=round(float(confidence), 4),
+                confidence_label=confidence_label,
+            )
         return RAGAnswer(
             question=question,
             answer=answer,
             sources=sources,
             found=True,
             confidence=round(float(confidence), 4),
+            confidence_label=confidence_label,
         )
+
+    def inspect_retrieval(
+        self,
+        index: PDFIndex,
+        query: str,
+        top_k: int | None = None,
+        metadata_filter: dict | None = None,
+    ) -> dict:
+        query = (query or "").strip()
+        if not query:
+            raise RAGPipelineError("Enter a question to inspect retrieval.")
+
+        try:
+            response = index.retrieval_service.retrieve(
+                query,
+                top_k=top_k or self.top_k,
+                metadata_filter=metadata_filter,
+            )
+        except RetrievalError as exc:
+            raise RAGPipelineError(f"Retrieval failed: {exc}") from exc
+
+        relevant = self._rerank_results(query, response.results)
+        return {
+            "query": query,
+            "top_k": top_k or self.top_k,
+            "results": [
+                {
+                    "rank": rank,
+                    "score": round(float(result.score), 4),
+                    "source_label": format_source_label(
+                        {
+                            **result.chunk.metadata,
+                            "page_number": result.chunk.page_number,
+                            "chunk_id": result.chunk.chunk_id,
+                            "section_title": result.chunk.metadata.get("section_title", ""),
+                        }
+                    ),
+                    "debug_chunk_id": result.chunk.chunk_id,
+                    "page_number": result.chunk.page_number,
+                    "section_title": result.chunk.metadata.get("section_title", ""),
+                    "snippet": sanitize_visible_text(self._trim(result.chunk.text, 420), remove_files=False),
+                }
+                for rank, result in enumerate(relevant, 1)
+            ],
+        }
 
     def _relevant_results(self, question: str, results: list[SearchResult]) -> list[SearchResult]:
         terms = self._keywords(question)
@@ -310,6 +398,20 @@ class PDFRAGService:
             if score_ok and lexical_ok:
                 relevant.append(result)
         return relevant
+
+    def _rerank_results(self, question: str, results: list[SearchResult]) -> list[SearchResult]:
+        terms = self._keywords(question)
+        if not terms:
+            return results
+        scored = []
+        for result in results:
+            chunk_terms = self._keywords(result.chunk.text)
+            overlap = len(terms & chunk_terms)
+            heading_bonus = 0.05 if result.chunk.metadata.get("heading") else 0.0
+            adjusted = float(result.score) + min(0.2, overlap * 0.04) + heading_bonus
+            scored.append((adjusted, result))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [result for _score, result in scored]
 
     def _generate_grounded_answer(self, question: str, sources: list[SourceReference]) -> str:
         return self._extractive_answer(question, sources)
@@ -349,7 +451,7 @@ class PDFRAGService:
             selected = [(0, source, self._trim(source.text, 260)) for source in sources[:2]]
 
         parts = [
-            f"{self._trim(sentence, 320)} ({source.pdf_name}, page {source.page_number})"
+            f"{self._trim(sentence, 320)} ({source.label()})"
             for _score, source, sentence in selected
         ]
         return " ".join(parts)
@@ -370,7 +472,16 @@ class PDFRAGService:
             chunk_id=result.chunk.chunk_id,
             score=float(result.score),
             text=result.chunk.text,
+            section_title=str(result.chunk.metadata.get("section_title", "")),
         )
+
+    @staticmethod
+    def _confidence_label(score: float, source_count: int) -> str:
+        if score >= 0.55 and source_count >= 2:
+            return "High"
+        if score >= 0.25 or source_count >= 2:
+            return "Medium"
+        return "Low"
 
     @staticmethod
     def _combined_pdf_name(pdf_names: list[str]) -> str:

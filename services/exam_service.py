@@ -14,6 +14,7 @@ from core.config import (
     read_groq_api_key,
 )
 from services.rag_service import PDFIndex
+from services.source_utils import format_source_label
 
 
 GROQ_LIMIT_MESSAGE = "Groq free API limit reached. Please try again later or reduce the number of questions."
@@ -100,6 +101,23 @@ class FullExamService:
         prompt = self.build_prompt(index.pdf_name, context, normalized, difficulty)
         return self._generate_with_groq(prompt, api_key)
 
+    def generate_exam_with_fallback(self, index: PDFIndex, request: ExamRequest) -> dict[str, Any]:
+        """Generate with Groq when possible, falling back to grounded local questions.
+
+        This is the UI-safe path for final exams: the preferred result is still
+        AI-generated, but missing keys, malformed responses, and network/API
+        failures do not crash the student experience.
+        """
+        normalized = request.normalized()
+        difficulty = normalized.difficulty if normalized.difficulty in self.DIFFICULTIES else "mixed"
+        try:
+            return self.generate_exam(index, normalized)
+        except ExamGenerationError as exc:
+            fallback = self._generate_test_fallback(index, normalized, difficulty)
+            fallback["fallback_used"] = True
+            fallback["fallback_note"] = f"AI generation was unavailable, so a grounded fallback was used. Reason: {exc}"
+            return fallback
+
     @staticmethod
     def build_prompt(
         pdf_name: str,
@@ -171,6 +189,7 @@ class FullExamService:
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                "User-Agent": "SmartStudyAssistant/1.0",
             },
             method="POST",
         )
@@ -226,13 +245,19 @@ class FullExamService:
                 "id": question_id,
                 "type": question_type,
                 "difficulty": difficulty,
-                "question": f"Based on the retrieved PDF chunk, what is stated in this excerpt: {stem}?",
+                "question": f"Based on the cited PDF source, what is stated in this excerpt: {stem}?",
                 "options": [],
                 "answer": answer if request.include_answer_key else None,
-                "source_references": [{"page_number": chunk.page_number, "chunk_id": chunk.chunk_id}],
+                "source_references": [
+                    {
+                        "page_number": chunk.page_number,
+                        "chunk_id": chunk.chunk_id,
+                        "section_title": chunk.metadata.get("section_title", ""),
+                    }
+                ],
             }
             if question_type == "multiple_choice":
-                question["question"] = f"Which option is supported by the retrieved PDF chunk from page {chunk.page_number}?"
+                question["question"] = f"Which option is supported by the cited PDF source from page {chunk.page_number}?"
                 question["options"] = [answer, "Not stated in the uploaded PDF", "Outside knowledge", "Unsupported claim"]
             elif question_type == "true_false":
                 question["question"] = f"True or False: {stem}"
@@ -260,11 +285,84 @@ class FullExamService:
 
     @staticmethod
     def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
-        payload.setdefault("title", "AI Quiz / Exam")
-        payload.setdefault("questions", [])
-        payload.setdefault("answer_key", [])
-        payload.setdefault("fallback_used", False)
+        if not isinstance(payload, dict):
+            payload = {}
+        payload["title"] = str(payload.get("title") or "AI Quiz / Exam")
+        payload["pdf_name"] = str(payload.get("pdf_name") or "")
+        payload["fallback_used"] = bool(payload.get("fallback_used", False))
+
+        raw_questions = payload.get("questions")
+        if not isinstance(raw_questions, list):
+            raw_questions = []
+        questions = []
+        for position, raw_question in enumerate(raw_questions, 1):
+            if not isinstance(raw_question, dict):
+                continue
+            question_type = str(raw_question.get("type") or "short_answer").strip().lower()
+            if question_type not in FullExamService.QUESTION_TYPES:
+                question_type = "short_answer"
+            options = raw_question.get("options") if isinstance(raw_question.get("options"), list) else []
+            refs = FullExamService._normalize_source_refs(raw_question.get("source_references"))
+            question = {
+                "id": raw_question.get("id") or position,
+                "type": question_type,
+                "difficulty": str(raw_question.get("difficulty") or "mixed"),
+                "question": str(raw_question.get("question") or NOT_FOUND_ANSWER),
+                "options": [str(option) for option in options],
+                "answer": raw_question.get("answer"),
+                "source_references": refs,
+            }
+            if question_type == "multiple_choice" and not question["options"]:
+                question["options"] = [
+                    str(question["answer"] or "Answer from the cited PDF source"),
+                    "Not stated in the uploaded PDF",
+                    "Outside knowledge",
+                    "Unsupported claim",
+                ]
+            questions.append(question)
+        payload["questions"] = questions
+
+        raw_answer_key = payload.get("answer_key")
+        if not isinstance(raw_answer_key, list):
+            raw_answer_key = []
+        payload["answer_key"] = [
+            {
+                "id": item.get("id"),
+                "answer": item.get("answer"),
+                "source_references": FullExamService._normalize_source_refs(item.get("source_references")),
+            }
+            for item in raw_answer_key
+            if isinstance(item, dict)
+        ]
+        if not payload["answer_key"]:
+            payload["answer_key"] = [
+                {
+                    "id": question["id"],
+                    "answer": question.get("answer"),
+                    "source_references": question.get("source_references", []),
+                }
+                for question in questions
+                if question.get("answer") is not None
+            ]
         return payload
+
+    @staticmethod
+    def _normalize_source_refs(raw_refs: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw_refs, list):
+            return []
+        refs = []
+        for raw_ref in raw_refs:
+            if not isinstance(raw_ref, dict):
+                continue
+            ref = {
+                "pdf_name": raw_ref.get("pdf_name"),
+                "page_number": raw_ref.get("page_number") or raw_ref.get("page"),
+                "chunk_id": raw_ref.get("chunk_id"),
+                "section_title": raw_ref.get("section_title", ""),
+            }
+            ref["label"] = format_source_label(ref)
+            refs.append(ref)
+        return refs
 
     @staticmethod
     def _parse_json(raw: str) -> dict[str, Any]:
