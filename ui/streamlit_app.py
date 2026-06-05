@@ -1,734 +1,841 @@
-"""
-Professional Streamlit UI for Smart Study Assistant.
-"""
-
 from __future__ import annotations
 
 import html
-import io
-import json
 import sys
+import tempfile
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 
-import pandas as pd
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from rag import LangChainDependencyError, LangChainPipelineError, LangChainRAGPipeline
-from services.quiz_service import QuizQuestion, QuizService
+from services.exam_service import ExamOptions, ExamService
+from services.general_ai_service import GeneralAIService
+from services.pdf_render_service import PdfRenderService
+from services.pdf_section_service import PdfSectionError, PdfSectionService
+from services.pdf_service import PdfExtractionError, PdfService
+from services.progress_service import ProgressService
+from services.quiz_service import QuizService
+from services.study_service import StudySection, StudyService
+from ui.navigation import DEFAULT_CURRENT_PAGE, NAV_ITEMS, normalize_current_page
 
 
-st.set_page_config(
-    page_title="Smart Study Assistant",
-    page_icon="📚",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="Smart Study Assistant", page_icon="📘", layout="wide")
 
 
-def inject_css() -> None:
+def inject_custom_css() -> None:
     st.markdown(
         """
         <style>
-            .stApp {
-                background: linear-gradient(180deg, #f6f8fc 0%, #eef3f8 100%);
-            }
-            .block-container {
-                padding-top: 2rem;
-                padding-bottom: 2rem;
-                max-width: 1280px;
-            }
-            .hero-card,
-            .status-card,
-            .panel-card,
-            .source-card,
-            .answer-card,
-            .quiz-card {
-                background: rgba(255, 255, 255, 0.92);
-                border: 1px solid rgba(15, 23, 42, 0.08);
-                border-radius: 18px;
-                box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
-            }
-            .hero-card {
-                padding: 1.4rem 1.6rem;
-                margin-bottom: 1rem;
-            }
-            .hero-title {
-                font-size: 2.1rem;
-                font-weight: 700;
-                color: #0f172a;
-                margin: 0;
-            }
-            .hero-subtitle {
-                font-size: 0.98rem;
-                color: #475569;
-                margin-top: 0.35rem;
-            }
-            .status-card,
-            .panel-card,
-            .source-card,
-            .answer-card,
-            .quiz-card {
-                padding: 1rem 1.1rem;
-            }
-            .status-label,
-            .panel-label,
-            .source-label {
-                font-size: 0.78rem;
-                text-transform: uppercase;
-                letter-spacing: 0.08em;
-                color: #64748b;
-                margin-bottom: 0.35rem;
-            }
-            .status-value,
-            .panel-value,
-            .source-title {
-                font-size: 1.08rem;
-                font-weight: 600;
-                color: #0f172a;
-            }
-            .status-subtle,
-            .source-meta,
-            .answer-meta,
-            .panel-subtle {
-                font-size: 0.85rem;
-                color: #64748b;
-                margin-top: 0.28rem;
-            }
-            .badge {
-                display: inline-block;
-                padding: 0.24rem 0.6rem;
-                border-radius: 999px;
-                font-size: 0.78rem;
-                font-weight: 600;
-                margin-right: 0.35rem;
-            }
-            .badge-good {
-                background: #dcfce7;
-                color: #166534;
-            }
-            .badge-warn {
-                background: #fef3c7;
-                color: #92400e;
-            }
-            .badge-neutral {
-                background: #e2e8f0;
-                color: #334155;
-            }
-            .answer-text,
-            .source-preview,
-            .quiz-text {
-                color: #1e293b;
-                line-height: 1.55;
-                font-size: 0.98rem;
-            }
-            .section-title {
-                font-size: 1.15rem;
-                font-weight: 700;
-                color: #0f172a;
-                margin-bottom: 0.6rem;
-            }
-            .soft-note {
-                color: #475569;
-                font-size: 0.92rem;
-                margin-top: 0.2rem;
-            }
+        .stApp { background: #F8FAFC; color: #0F172A; }
+        .block-container { max-width: 1240px; padding-top: 2rem; padding-bottom: 2rem; }
+        h1, h2, h3 { color: #0F172A; letter-spacing: 0; }
+        [data-testid="stSidebar"] { display: none; }
+        .top-nav {
+            background: #FFFFFF;
+            border: 1px solid #E2E8F0;
+            border-radius: 12px;
+            padding: .75rem .9rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, .07);
+            position: sticky;
+            top: 1rem;
+            z-index: 20;
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: .45rem;
+            min-height: 2.4rem;
+            color: #1E3A8A;
+            font-weight: 800;
+            font-size: 1.05rem;
+            white-space: nowrap;
+        }
+        .nav-active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 2.45rem;
+            border-radius: 999px;
+            background: #DBEAFE;
+            color: #1E3A8A;
+            font-weight: 800;
+            border: 1px solid #BFDBFE;
+        }
+        .status-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: .75rem;
+            align-items: center;
+            background: #FFFFFF;
+            border: 1px solid #E2E8F0;
+            border-radius: 12px;
+            padding: .7rem .95rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, .045);
+            color: #64748B;
+            font-size: .9rem;
+        }
+        .status-bar strong { color: #0F172A; }
+        .hero-card {
+            background: linear-gradient(135deg, #1E3A8A 0%, #0F766E 100%);
+            color: #FFFFFF;
+            border-radius: 14px;
+            padding: 1.25rem 1.35rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 16px 34px rgba(30, 58, 138, .16);
+        }
+        .hero-card h1 { color: #FFFFFF; margin: 0; font-size: 1.55rem; }
+        .hero-card p { color: #E0F2FE; margin: .35rem 0 0; }
+        .card {
+            background: #ffffff;
+            border: 1px solid #E2E8F0;
+            border-radius: 12px;
+            padding: 1.05rem 1.1rem;
+            margin-bottom: .85rem;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, .07);
+        }
+        .card-title { color: #1E3A8A; font-weight: 700; font-size: 1.04rem; margin-bottom: .35rem; }
+        .muted { color: #64748B; font-size: .9rem; }
+        .roadmap-card {
+            border-left: 5px solid #0EA5A4;
+            position: relative;
+        }
+        .roadmap-index {
+            width: 2rem;
+            height: 2rem;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: #1E3A8A;
+            color: white;
+            font-weight: 800;
+            margin-right: .45rem;
+        }
+        .objective-list { margin: .45rem 0 .2rem 1.15rem; color: #0F172A; }
+        .badge {
+            display: inline-block;
+            border-radius: 999px;
+            padding: .18rem .55rem;
+            font-weight: 700;
+            font-size: .75rem;
+            margin-right: .25rem;
+        }
+        .badge-primary { background: #DBEAFE; color: #1E3A8A; }
+        .badge-accent { background: #CCFBF1; color: #0F766E; }
+        .badge-success { background: #DCFCE7; color: #16A34A; }
+        .badge-warning { background: #FEF3C7; color: #B45309; }
+        .tag {
+            display: inline-block;
+            background: #CCFBF1;
+            color: #0F766E;
+            border-radius: 999px;
+            padding: .16rem .48rem;
+            margin: .16rem .18rem .16rem 0;
+            font-size: .75rem;
+        }
+        .prompt-card {
+            background: #FFFFFF;
+            border: 1px solid #DDE7F0;
+            border-radius: 12px;
+            padding: .8rem .9rem;
+            min-height: 4.2rem;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, .05);
+        }
+        .source-label { color: #64748B; font-size: .85rem; }
+        div.stButton > button {
+            border-radius: 999px;
+            border-color: #E2E8F0;
+            color: #0F172A;
+        }
+        div.stButton > button[kind="primary"] { background: #1E3A8A; border-color: #1E3A8A; }
+        div.stButton > button:hover { border-color: #0EA5A4; color: #0F172A; }
+        div[data-testid="stProgress"] > div > div > div { background-color: #0EA5A4; }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
-def initialize_state() -> None:
+def init_state() -> None:
     defaults = {
-        "pdf_loaded": False,
+        "pdf_bytes": b"",
         "pdf_name": "",
-        "rag_pipeline": None,
-        "rag_stats": {},
-        "page_documents": [],
-        "chunk_documents": [],
-        "last_answer": None,
-        "last_sources": [],
-        "last_chunks": [],
-        "quiz_questions": [],
-        "benchmark_results": None,
-        "ocr_text": "",
-        "embedding_provider": "minilm",
-        "chunk_size": 500,
-        "chunk_overlap": 50,
-        "top_k": 3,
-        "show_sources": True,
-        "debug_mode": False,
-        "quiz_count": 5,
-        "quiz_difficulty": "medium",
-        "upload_status": "",
-        "ocr_status": "",
+        "pages": [],
+        "pending_pages": [],
+        "pending_sections": [],
+        "pending_pdf_bytes": b"",
+        "pending_pdf_name": "",
+        "sections": [],
+        "current_section_index": 0,
+        "upload_message": "",
+        "section_explanation": "",
+        "section_quiz": [],
+        "section_quiz_answers": {},
+        "section_quiz_score": None,
+        "section_answer": "",
+        "ask_ai_history": [],
+        "final_exam": None,
+        "weak_topic_review": "",
+        "current_page": DEFAULT_CURRENT_PAGE,
+        "progress": ProgressService.default_state(),
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+    st.session_state.progress = ProgressService.load(st.session_state.progress)
+    st.session_state.current_page = normalize_current_page(st.session_state.get("current_page"))
+    st.session_state.sections = normalize_study_sections(st.session_state.sections)
+    st.session_state.pending_sections = normalize_study_sections(st.session_state.pending_sections)
 
 
-def embedding_model_name() -> str:
-    if st.session_state.embedding_provider == "mock":
-        return "mock"
-    return "sentence-transformers/all-MiniLM-L6-v2"
+def normalize_study_section(section: Any) -> StudySection:
+    if isinstance(section, StudySection):
+        return section
 
+    if isinstance(section, dict):
+        data = section
+    elif hasattr(section, "__dict__"):
+        data = vars(section)
+    else:
+        data = {}
 
-def embedding_label() -> str:
-    if st.session_state.embedding_provider == "mock":
-        return "Mock"
-    return "MiniLM"
-
-
-def vector_store_status() -> str:
-    return "Ready" if st.session_state.rag_pipeline is not None else "Not built"
-
-
-def build_pipeline() -> LangChainRAGPipeline:
-    return LangChainRAGPipeline(
-        embedding_model_name=embedding_model_name(),
-        chunk_size=st.session_state.chunk_size,
-        chunk_overlap=st.session_state.chunk_overlap,
-        top_k=st.session_state.top_k,
+    return StudySection(
+        section_number=int(data.get("section_number", 0)),
+        title=str(data.get("title", "")),
+        start_page=int(data.get("start_page", 0)),
+        end_page=int(data.get("end_page", 0)),
+        estimated_minutes=int(data.get("estimated_minutes", 0)),
+        difficulty=str(data.get("difficulty", "Easy")),
+        summary=str(data.get("summary", "")),
+        learning_objectives=list(data.get("learning_objectives") or []),
+        key_concepts=list(data.get("key_concepts") or []),
     )
 
 
-def reset_document_state() -> None:
-    st.session_state.pdf_loaded = False
-    st.session_state.pdf_name = ""
-    st.session_state.rag_pipeline = None
-    st.session_state.rag_stats = {}
-    st.session_state.page_documents = []
-    st.session_state.chunk_documents = []
-    st.session_state.last_answer = None
-    st.session_state.last_sources = []
-    st.session_state.last_chunks = []
-    st.session_state.quiz_questions = []
-
-
-def process_uploaded_pdf(uploaded_file: Any) -> dict[str, Any]:
-    if uploaded_file is None:
-        return {"success": False, "message": "Please upload a PDF first."}
-
-    try:
-        pipeline = build_pipeline()
-        with TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir) / uploaded_file.name
-            temp_path.write_bytes(uploaded_file.getbuffer())
-            stats = pipeline.process_pdf(str(temp_path))
-
-        st.session_state.pdf_loaded = True
-        st.session_state.pdf_name = uploaded_file.name
-        st.session_state.rag_pipeline = pipeline
-        st.session_state.rag_stats = stats
-        st.session_state.page_documents = pipeline.documents
-        st.session_state.chunk_documents = pipeline.chunks
-        st.session_state.quiz_questions = []
-        st.session_state.last_answer = None
-        st.session_state.last_sources = []
-        st.session_state.last_chunks = []
-        st.session_state.ocr_text = "\n\n".join(doc.page_content for doc in pipeline.documents if doc.page_content)
-        return {"success": True, "message": f"Processed {uploaded_file.name}", "stats": stats}
-
-    except LangChainDependencyError as error:
-        reset_document_state()
-        return {"success": False, "message": str(error)}
-    except LangChainPipelineError:
-        reset_document_state()
-        return {"success": False, "message": "Something went wrong while processing the PDF."}
-    except Exception:
-        reset_document_state()
-        return {"success": False, "message": "Something went wrong while processing the PDF."}
-
-
-def answer_question(query: str) -> dict[str, Any]:
-    pipeline = st.session_state.rag_pipeline
-    if not st.session_state.pdf_loaded or pipeline is None:
-        return {"success": False, "message": "Upload and process a PDF first."}
-
-    try:
-        result = pipeline.answer_question(query)
-        st.session_state.last_answer = result["answer"]
-        st.session_state.last_sources = result["sources"]
-        st.session_state.last_chunks = result["retrieved_chunks"]
-        return {"success": True, **result}
-    except (LangChainDependencyError, LangChainPipelineError):
-        return {"success": False, "message": "Something went wrong while answering the question."}
-    except Exception:
-        return {"success": False, "message": "Something went wrong while answering the question."}
-
-
-def generate_quiz(num_questions: int) -> list[QuizQuestion]:
-    if not st.session_state.pdf_loaded:
+def normalize_study_sections(sections: list[Any]) -> list[StudySection]:
+    if not sections:
         return []
+    return [normalize_study_section(section) for section in sections]
 
-    questions = QuizService.generate_from_documents(st.session_state.chunk_documents, num_questions=num_questions)
-    st.session_state.quiz_questions = questions
+
+def card(title: str, body: str, extra: str = "") -> None:
+    st.markdown(
+        f"""
+        <div class="card">
+            <div class="card-title">{html.escape(title)}</div>
+            <div>{body}</div>
+            {extra}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def roadmap_card(section: StudySection, body: str) -> None:
+    st.markdown(
+        f"""
+        <div class="card roadmap-card">
+            <div class="card-title"><span class="roadmap-index">{section.section_number}</span>{html.escape(section.title)}</div>
+            <div>{body}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def badge(text: str, kind: str = "primary") -> str:
+    return f'<span class="badge badge-{kind}">{html.escape(text)}</span>'
+
+
+def format_seconds(seconds: int) -> str:
+    minutes, remainder = divmod(max(0, int(seconds)), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m {remainder}s"
+
+
+def has_pdf() -> bool:
+    return bool(st.session_state.pdf_bytes and st.session_state.pages and st.session_state.sections)
+
+
+def current_section() -> StudySection | None:
+    sections = st.session_state.sections
+    if not sections:
+        return None
+    index = min(max(0, st.session_state.current_section_index), len(sections) - 1)
+    st.session_state.current_section_index = index
+    return sections[index]
+
+
+def reset_section_outputs() -> None:
+    st.session_state.section_explanation = ""
+    st.session_state.section_quiz = []
+    st.session_state.section_quiz_answers = {}
+    st.session_state.section_quiz_score = None
+    st.session_state.section_answer = ""
+
+
+def source_label(section: StudySection, page: int | None = None) -> str:
+    if page is not None:
+        return f"Source: Section {section.section_number}, Page {page}"
+    if section.start_page == section.end_page:
+        return f"Source: Page {section.start_page}"
+    return f"Source: Pages {section.start_page}-{section.end_page}"
+
+
+def extract_pdf(uploaded_file: Any) -> None:
+    pdf_bytes = uploaded_file.getvalue()
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
+        tmp.write(pdf_bytes)
+        tmp.flush()
+        pages = PdfService().extract_pages(tmp.name)
+
+    st.session_state.pending_pdf_bytes = pdf_bytes
+    st.session_state.pending_pdf_name = uploaded_file.name
+    st.session_state.pending_pages = pages
+    st.session_state.pending_sections = StudyService().generate_study_plan(pages)
+    if not st.session_state.pending_sections:
+        raise PdfExtractionError("No readable study sections could be created from this PDF.")
+    st.session_state.upload_message = f"Processed {uploaded_file.name}. Ready to generate a study plan."
+
+
+def generate_study_plan_from_pending() -> None:
+    pages = st.session_state.pending_pages
+    sections = st.session_state.pending_sections or StudyService().generate_study_plan(pages)
+    if not sections:
+        raise PdfExtractionError("No readable study sections could be created from this PDF.")
+
+    st.session_state.pdf_bytes = st.session_state.pending_pdf_bytes
+    st.session_state.pdf_name = st.session_state.pending_pdf_name
+    st.session_state.pages = pages
+    st.session_state.sections = sections
+    st.session_state.current_section_index = 0
+    st.session_state.upload_message = f"Generated {len(sections)} study sections."
+    st.session_state.progress = ProgressService.default_state()
+    st.session_state.final_exam = None
+    reset_section_outputs()
+
+
+def section_context(section: StudySection) -> str:
+    return StudyService.section_text(st.session_state.pages, section)
+
+
+def generate_explanation(section: StudySection) -> str:
+    text = section_context(section)
+    concepts = ", ".join(section.key_concepts[:4]) or "the main ideas"
+    sentences = [item.strip() for item in text.replace("\n", " ").split(".") if len(item.split()) >= 6]
+    summary = " ".join(sentence + "." for sentence in sentences[:2]) or section.summary
+    definitions = section.key_concepts[:3] or ["Core idea", "Example", "Review point"]
+    return (
+        f"**Summary**\n\n{summary}\n\n"
+        f"**Key Ideas**\n\n- {concepts}\n- Connect the examples on {section.page_label.lower()} to the section title.\n\n"
+        f"**Important Definitions**\n\n"
+        + "\n".join(f"- {term}: define this term from the section notes." for term in definitions)
+        + "\n\n**Exam Tips**\n\n"
+        "- Be ready to explain the section in your own words.\n"
+        "- Practice one example without looking at the PDF.\n"
+        "- Review any key concept tag you cannot define quickly."
+    )
+
+
+def answer_section_question(section: StudySection, question: str) -> str:
+    text = section_context(section)
+    response = GeneralAIService().ask(
+        [
+            {
+                "role": "user",
+                "content": f"Use this study section as context when helpful:\n{text[:5000]}",
+            }
+        ],
+        question,
+    )
+    if response["ok"]:
+        return f"{response['answer']}\n\n{source_label(section)}"
+    sentences = [item.strip() for item in text.replace("\n", " ").split(".") if len(item.split()) > 6]
+    answer = (sentences[0] + ".") if sentences else response["answer"]
+    return f"{answer}\n\n{source_label(section)}"
+
+
+def render_top_nav() -> None:
+    with st.container(border=True):
+        st.markdown('<div class="top-nav">', unsafe_allow_html=True)
+        columns = st.columns([2.25, 1, 1.15, 1.15, 1, 1, 1])
+        with columns[0]:
+            st.markdown('<div class="brand">📘 Smart Study Assistant</div>', unsafe_allow_html=True)
+        for index, label in enumerate(NAV_ITEMS, start=1):
+            with columns[index]:
+                if st.session_state.current_page == label:
+                    st.markdown(f'<div class="nav-active">{html.escape(label)}</div>', unsafe_allow_html=True)
+                elif st.button(label, key=f"nav-{label}", use_container_width=True):
+                    st.session_state.current_page = label
+                    st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_status_bar() -> None:
+    if has_pdf():
+        status = (
+            f"<span><strong>Current PDF:</strong> {html.escape(st.session_state.pdf_name)}</span>"
+            f"<span><strong>Pages:</strong> {len(st.session_state.pages)}</span>"
+            f"<span><strong>Sections:</strong> {len(st.session_state.sections)}</span>"
+            f"<span><strong>Progress:</strong> {overall_progress():.0f}%</span>"
+        )
+    else:
+        status = "No PDF loaded yet — upload a document to begin."
+    st.markdown(f'<div class="status-bar">{status}</div>', unsafe_allow_html=True)
+
+
+def render_upload_hero() -> None:
+    st.markdown(
+        """
+        <div class="hero-card">
+            <h1>Turn PDFs into guided study sessions, quizzes, and exam practice.</h1>
+            <p>Upload course material, study section by section, and ask the AI tutor for help.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_upload() -> None:
+    render_upload_hero()
+    st.subheader("Upload PDF")
+    uploaded_file = st.file_uploader("Choose a PDF", type=["pdf"])
+    if st.button("Process PDF", type="primary", disabled=uploaded_file is None):
+        try:
+            with st.spinner("Extracting text from your PDF..."):
+                extract_pdf(uploaded_file)
+            st.success(st.session_state.upload_message)
+        except PdfExtractionError as exc:
+            st.error(f"PDF extraction failed: {exc}")
+        except Exception as exc:
+            st.error(f"Could not process PDF safely: {exc}")
+
+    if st.session_state.pending_pages:
+        draft_sections = st.session_state.pending_sections or st.session_state.sections
+        estimated = sum(section.estimated_minutes for section in draft_sections)
+        cols = st.columns(3)
+        cols[0].metric("Pages processed", len(st.session_state.pending_pages))
+        cols[1].metric("Total sections generated", len(draft_sections))
+        cols[2].metric("Estimated study time", f"{estimated} min")
+        if st.button("Generate Study Plan", type="primary"):
+            try:
+                generate_study_plan_from_pending()
+                st.success(st.session_state.upload_message)
+                st.session_state.current_page = "Study Plan"
+                st.rerun()
+            except PdfExtractionError as exc:
+                st.error(str(exc))
+
+
+def section_status(section: StudySection) -> str:
+    if section.section_number in st.session_state.progress.completed_sections:
+        return "Completed"
+    current = current_section()
+    if current and current.section_number == section.section_number:
+        return "In Progress"
+    return "Not Started"
+
+
+def render_study_plan() -> None:
+    st.subheader("Study Plan")
+    if not has_pdf():
+        st.info("Upload and process a PDF first.")
+        return
+
+    total_time = sum(section.estimated_minutes for section in st.session_state.sections)
+    cols = st.columns(3)
+    cols[0].metric("Total sections", len(st.session_state.sections))
+    cols[1].metric("Total estimated time", f"{total_time} min")
+    cols[2].metric("Completed sections", len(st.session_state.progress.completed_sections))
+    st.progress(overall_progress() / 100)
+    st.caption(f"{overall_progress():.0f}%")
+
+    for index, section in enumerate(st.session_state.sections):
+        status = section_status(section)
+        status_kind = "success" if status == "Completed" else "accent" if status == "In Progress" else "warning"
+        concepts = "".join(
+            f'<span class="tag">{html.escape(tag)}</span>' for tag in getattr(section, "key_concepts", [])
+        )
+        objectives = "".join(
+            f"<li>{html.escape(objective)}</li>" for objective in getattr(section, "learning_objectives", [])[:5]
+        )
+        body = (
+            f"{badge(section.page_label, 'accent')}"
+            f"{badge(section.difficulty, 'warning')}"
+            f"{badge(status, status_kind)}"
+            f"<p>{html.escape(section.summary)}</p>"
+            f"<div class='muted'><strong>Learning objectives</strong></div>"
+            f"<ul class='objective-list'>{objectives}</ul>"
+            f"<div>{concepts}</div>"
+            f"<p class='muted'>Estimated time: {section.estimated_minutes} minutes</p>"
+        )
+        roadmap_card(section, body)
+        if st.button("Start Studying", key=f"start-section-{section.section_number}"):
+            st.session_state.current_section_index = index
+            reset_section_outputs()
+            st.session_state.current_page = "Study Mode"
+            st.rerun()
+
+
+def render_pdf_pages(section: StudySection) -> None:
+    st.markdown(f"### PDF Section")
+    st.markdown(f"**Now studying {section.page_label}**")
+    images = PdfRenderService.render_pages(st.session_state.pdf_bytes, section.start_page, section.end_page)
+    if images:
+        for offset, image in enumerate(images, start=section.start_page):
+            st.image(image, caption=source_label(section, offset), use_container_width=True)
+    else:
+        st.info("Page images are unavailable. Use the extracted text fallback below.")
+
+    try:
+        section_pdf = PdfSectionService.extract_section_pdf(
+            st.session_state.pdf_bytes,
+            section.start_page,
+            section.end_page,
+        )
+        st.download_button(
+            "Download section PDF",
+            data=section_pdf,
+            file_name=f"section-{section.section_number}.pdf",
+            mime="application/pdf",
+        )
+    except PdfSectionError:
+        st.caption("Section PDF download is unavailable for this page range.")
+
+    with st.expander("Extracted text fallback"):
+        st.text_area("Section text", value=section_context(section), height=300, label_visibility="collapsed")
+
+
+def render_study_mode() -> None:
+    st.subheader("Study Mode")
+    if not has_pdf():
+        st.info("Upload and process a PDF first.")
+        return
+
+    section = current_section()
+    if section is None:
+        st.info("Generate a study plan first.")
+        return
+
+    left, right = st.columns([0.65, 0.35])
+    with left:
+        render_pdf_pages(section)
+
+    with right:
+        card(
+            section.title,
+            f"{badge(f'Section {section.section_number} of {len(st.session_state.sections)}', 'primary')}"
+            f"{badge(section.page_label, 'accent')}"
+            f"{badge(section.difficulty, 'warning')}"
+            f"<p class='muted'>Estimated: {section.estimated_minutes} minutes</p>",
+        )
+        st.progress((section.section_number - 1) / max(1, len(st.session_state.sections)))
+        st.metric("Actual study time", format_seconds(st.session_state.progress.actual_study_seconds))
+        timer_cols = st.columns(3)
+        if timer_cols[0].button("Start Session"):
+            st.session_state.progress = ProgressService.start_timer(st.session_state.progress)
+            st.rerun()
+        if timer_cols[1].button("Pause"):
+            st.session_state.progress = ProgressService.pause_timer(st.session_state.progress)
+            st.rerun()
+        if timer_cols[2].button("Finish Section", type="primary"):
+            st.session_state.progress = ProgressService.finish_section(
+                st.session_state.progress,
+                section.section_number,
+            )
+            st.rerun()
+
+        if st.button("Explain This Section", use_container_width=True):
+            st.session_state.section_explanation = generate_explanation(section)
+        if st.session_state.section_explanation:
+            with st.expander("Explanation", expanded=True):
+                st.markdown(st.session_state.section_explanation)
+
+        with st.expander("Quiz", expanded=bool(st.session_state.section_quiz)):
+            if st.button("Generate Quiz", use_container_width=True):
+                st.session_state.section_quiz = build_section_quiz(section)
+                st.session_state.section_quiz_answers = {}
+                st.session_state.section_quiz_score = None
+            if st.session_state.section_quiz:
+                render_section_quiz(section)
+
+        with st.expander("Ask a question about this section"):
+            question = st.text_input("Question", key=f"section-question-{section.section_number}")
+            if st.button("Ask About This Section", disabled=not question.strip()):
+                st.session_state.section_answer = answer_section_question(section, question)
+            if st.session_state.section_answer:
+                st.markdown(st.session_state.section_answer)
+
+        if st.button("Next Section", use_container_width=True):
+            st.session_state.current_section_index = StudyService.next_section_index(
+                st.session_state.current_section_index,
+                len(st.session_state.sections),
+            )
+            reset_section_outputs()
+            st.rerun()
+
+
+def build_section_quiz(section: StudySection) -> list[dict[str, Any]]:
+    generated = QuizService.generate_from_documents(
+        [{"text": section_context(section), "source": st.session_state.pdf_name, "page": section.start_page}],
+        num_questions=3,
+    )
+    questions: list[dict[str, Any]] = []
+    if generated:
+        first = generated[0]
+        questions.append(
+            {
+                "type": "multiple_choice",
+                "question": first.prompt,
+                "options": first.options,
+                "answer": first.answer,
+                "source_page": first.page or section.start_page,
+            }
+        )
+    text = section_context(section)
+    concept = section.key_concepts[0] if section.key_concepts else section.title
+    questions.append(
+        {
+            "type": "true_false",
+            "question": f"True or False: {concept} is discussed in this section.",
+            "options": ["True", "False"],
+            "answer": "True",
+            "source_page": section.start_page,
+        }
+    )
+    questions.append(
+        {
+            "type": "short_answer",
+            "question": f"In one sentence, explain why {concept} matters in this section.",
+            "options": [],
+            "answer": "A strong answer should use the section text and mention the main idea clearly.",
+            "source_page": section.start_page,
+        }
+    )
     return questions
 
 
-def load_benchmark_results() -> pd.DataFrame | None:
-    candidate_files = [
-        PROJECT_ROOT / "experiments" / "results" / "benchmark_results.csv",
-        PROJECT_ROOT / "results" / "benchmark_results.csv",
-    ]
-    available = [path for path in candidate_files if path.exists()]
-    if not available:
-        st.session_state.benchmark_results = None
-        return None
-
-    latest = max(available, key=lambda path: path.stat().st_mtime)
-    try:
-        dataframe = pd.read_csv(latest)
-    except Exception:
-        st.session_state.benchmark_results = None
-        return None
-
-    st.session_state.benchmark_results = dataframe
-    return dataframe
-
-
-def current_document_label() -> str:
-    return st.session_state.pdf_name if st.session_state.pdf_loaded else "No document loaded"
-
-
-def page_label(document: Any) -> str:
-    metadata = dict(getattr(document, "metadata", {}) or {})
-    page = metadata.get("page")
-    return f"Page {page}" if page else "Page"
-
-
-def chunk_preview_text(text: str, limit: int = 220) -> str:
-    cleaned = " ".join((text or "").split())
-    if len(cleaned) <= limit:
-        return cleaned
-    return cleaned[: limit - 3].rstrip() + "..."
-
-
-def render_status_card(label: str, value: str, subtle: str = "") -> None:
-    safe_label = html.escape(label)
-    safe_value = html.escape(value)
-    safe_subtle = html.escape(subtle)
-    st.markdown(
-        f"""
-        <div class="status-card">
-            <div class="status-label">{safe_label}</div>
-            <div class="status-value">{safe_value}</div>
-            <div class="status-subtle">{safe_subtle}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_panel_card(label: str, value: str, subtle: str = "") -> None:
-    safe_label = html.escape(label)
-    safe_value = html.escape(value)
-    safe_subtle = html.escape(subtle)
-    st.markdown(
-        f"""
-        <div class="panel-card">
-            <div class="panel-label">{safe_label}</div>
-            <div class="panel-value">{safe_value}</div>
-            <div class="panel-subtle">{safe_subtle}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_answer_card(answer: str, citations: list[str]) -> None:
-    badge_class = "badge-good" if citations else "badge-warn"
-    badge_text = "Grounded" if citations else "Low confidence"
-    citations_text = " • ".join(html.escape(citation) for citation in citations[:3]) if citations else "No citations"
-    safe_answer = html.escape(answer)
-    st.markdown(
-        f"""
-        <div class="answer-card">
-            <div class="answer-meta"><span class="badge {badge_class}">{badge_text}</span></div>
-            <div class="answer-text" style="margin-top:0.7rem;">{safe_answer}</div>
-            <div class="answer-meta" style="margin-top:0.8rem;">{citations_text}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_source_card(chunk: dict[str, Any]) -> None:
-    page = f"Page {chunk['page']}" if chunk.get("page") else "Page n/a"
-    score = f"{chunk['score']:.4f}" if chunk.get("score") is not None else "n/a"
-    preview = html.escape(chunk_preview_text(chunk.get("text", "")))
-    source = html.escape(chunk.get("source", "Uploaded PDF"))
-    st.markdown(
-        f"""
-        <div class="source-card">
-            <div class="source-label">Source</div>
-            <div class="source-title">{source}</div>
-            <div class="source-meta">{html.escape(page)} • Score {html.escape(score)}</div>
-            <div class="source-preview" style="margin-top:0.7rem;">{preview}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_quiz_card(index: int, question: QuizQuestion) -> None:
-    letters = ["A", "B", "C", "D"]
-    options_html = "".join(
-        f"<div class='quiz-text' style='margin-top:0.4rem;'><strong>{letters[idx]}.</strong> {html.escape(option)}</div>"
-        for idx, option in enumerate(question.options[:4])
-    )
-    safe_prompt = html.escape(question.prompt)
-    st.markdown(
-        f"""
-        <div class="quiz-card">
-            <div class="panel-label">Question {index}</div>
-            <div class="source-title" style="margin-bottom:0.7rem;">{safe_prompt}</div>
-            {options_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    with st.expander("Show answer"):
-        st.write(question.answer)
-        if question.citation:
-            st.caption(question.citation)
-
-
-def quiz_as_json(questions: list[QuizQuestion]) -> str:
-    payload = [
-        {
-            "question": question.prompt,
-            "options": question.options,
-            "answer": question.answer,
-            "citation": question.citation,
-            "difficulty": st.session_state.quiz_difficulty,
-        }
-        for question in questions
-    ]
-    return json.dumps(payload, indent=2)
-
-
-def quiz_as_markdown(questions: list[QuizQuestion]) -> str:
-    lines = ["# Smart Study Assistant Quiz", ""]
-    for index, question in enumerate(questions, start=1):
-        lines.append(f"## Question {index}")
-        lines.append(question.prompt)
-        lines.append("")
-        for option_index, option in enumerate(question.options[:4], start=1):
-            letter = chr(64 + option_index)
-            lines.append(f"- {letter}. {option}")
-        lines.append("")
-        lines.append(f"Answer: {question.answer}")
-        if question.citation:
-            lines.append(f"Citation: {question.citation}")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def extract_ocr_text(uploaded_file: Any) -> str:
-    import fitz
-    import pytesseract
-    from PIL import Image
-
-    pytesseract.get_tesseract_version()
-    suffix = Path(uploaded_file.name).suffix.lower()
-
-    if suffix == ".pdf":
-        document = fitz.open(stream=uploaded_file.getvalue(), filetype="pdf")
-        extracted_pages: list[str] = []
-        for index, page in enumerate(document, start=1):
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-            mode = "RGBA" if pixmap.alpha else "RGB"
-            image = Image.frombytes(mode, [pixmap.width, pixmap.height], pixmap.samples)
-            page_text = pytesseract.image_to_string(image).strip()
-            if page_text:
-                extracted_pages.append(f"[Page {index}]\n{page_text}")
-        return "\n\n".join(extracted_pages).strip()
-
-    image = Image.open(io.BytesIO(uploaded_file.getvalue()))
-    return pytesseract.image_to_string(image).strip()
-
-
-def handle_ocr_request(uploaded_file: Any) -> tuple[bool, str]:
-    if uploaded_file is None:
-        return False, "Please upload a PDF or image first."
-
-    try:
-        import pytesseract
-        from PIL import Image  # noqa: F401
-    except ImportError:
-        st.session_state.ocr_text = ""
-        return False, "OCR is not installed. Install pytesseract and Pillow."
-
-    try:
-        pytesseract.get_tesseract_version()
-    except Exception:
-        st.session_state.ocr_text = ""
-        return False, "Tesseract is not installed."
-
-    try:
-        text = extract_ocr_text(uploaded_file)
-    except Exception:
-        st.session_state.ocr_text = ""
-        return False, "Something went wrong during OCR extraction."
-
-    st.session_state.ocr_text = text
-    if not text.strip():
-        return False, "No text was extracted."
-    return True, "OCR text extracted."
-
-
-inject_css()
-initialize_state()
-
-with st.sidebar:
-    st.header("⚙️ Settings")
-    st.session_state.embedding_provider = st.selectbox(
-        "Embedding provider",
-        ["minilm", "mock"],
-        index=["minilm", "mock"].index(st.session_state.embedding_provider),
-    )
-    st.session_state.chunk_size = st.slider("Chunk size", min_value=200, max_value=1000, value=st.session_state.chunk_size, step=50)
-    st.session_state.chunk_overlap = st.slider(
-        "Overlap",
-        min_value=0,
-        max_value=min(200, st.session_state.chunk_size - 1),
-        value=min(st.session_state.chunk_overlap, min(200, st.session_state.chunk_size - 1)),
-        step=10,
-    )
-    st.session_state.top_k = st.slider("Top-K", min_value=1, max_value=8, value=st.session_state.top_k, step=1)
-    st.session_state.show_sources = st.checkbox("Show sources", value=st.session_state.show_sources)
-    st.session_state.debug_mode = st.checkbox("Debug mode", value=st.session_state.debug_mode)
-
-    if st.session_state.embedding_provider == "mock":
-        st.warning("Mock embeddings are for testing only. Answers may be weak.")
-    else:
-        st.info("Using real semantic embeddings.")
-
-st.markdown(
-    """
-    <div class="hero-card">
-        <div class="hero-title">📚 Smart Study Assistant</div>
-        <div class="hero-subtitle">PDF Q&amp;A • Quiz Generation • RAG with Citations</div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-status_columns = st.columns(4)
-with status_columns[0]:
-    render_status_card("Current document", current_document_label(), "Processed PDF")
-with status_columns[1]:
-    render_status_card("Chunks", str(st.session_state.rag_stats.get("chunks", 0)), "Ready for retrieval")
-with status_columns[2]:
-    render_status_card("Embedding", embedding_label(), embedding_model_name())
-with status_columns[3]:
-    render_status_card("Vector store", vector_store_status(), "FAISS in memory")
-
-upload_tab, ask_tab, quiz_tab, ocr_tab, results_tab, about_tab = st.tabs(
-    ["Upload", "Ask", "Quiz", "OCR", "Results", "About"]
-)
-
-with upload_tab:
-    st.subheader("Upload")
-    uploaded_file = st.file_uploader("Choose PDF", type=["pdf"], label_visibility="collapsed")
-    upload_action_col, upload_status_col = st.columns([1, 2])
-    with upload_action_col:
-        process_clicked = st.button("Process PDF", use_container_width=True, disabled=uploaded_file is None)
-    with upload_status_col:
-        if process_clicked:
-            with st.spinner("Processing PDF..."):
-                result = process_uploaded_pdf(uploaded_file)
-            st.session_state.upload_status = result["message"]
-            if result["success"]:
-                st.success(result["message"])
-            else:
-                st.error(result["message"])
-        elif st.session_state.upload_status:
-            st.caption(st.session_state.upload_status)
-
-    if st.session_state.pdf_loaded:
-        pages = st.session_state.rag_stats.get("pages", 0)
-        chunks = st.session_state.rag_stats.get("chunks", 0)
-        model = st.session_state.rag_stats.get("embedding_model", embedding_model_name())
-        metric_columns = st.columns(3)
-        with metric_columns[0]:
-            render_panel_card("Pages", str(pages))
-        with metric_columns[1]:
-            render_panel_card("Chunks", str(chunks))
-        with metric_columns[2]:
-            render_panel_card("Embedding model", model)
-
-        with st.expander("Preview extracted chunks"):
-            for index, chunk in enumerate(st.session_state.chunk_documents[:3], start=1):
-                metadata = dict(getattr(chunk, "metadata", {}) or {})
-                page = metadata.get("page")
-                render_source_card(
-                    {
-                        "source": Path(str(metadata.get("source", st.session_state.pdf_name))).name,
-                        "page": page,
-                        "score": None,
-                        "text": getattr(chunk, "page_content", ""),
-                    }
-                )
-
-with ask_tab:
-    st.subheader("Ask")
-    if not st.session_state.pdf_loaded:
-        st.info("Upload and process a PDF first.")
-    else:
-        question = st.text_input("Ask a question about the document", placeholder="What is INNER JOIN?")
-        ask_clicked = st.button("Ask", use_container_width=False)
-
-        if ask_clicked:
-            if not question.strip():
-                st.warning("Please enter a question.")
-            else:
-                with st.spinner("Searching the document..."):
-                    answer_data = answer_question(question)
-
-                if not answer_data["success"]:
-                    st.error(answer_data["message"])
-                elif not answer_data["citations"]:
-                    st.warning("I could not find a reliable answer in the uploaded document.")
-                    render_answer_card(answer_data["answer"], [])
-                else:
-                    render_answer_card(answer_data["answer"], answer_data["citations"])
-
-        if st.session_state.last_answer and st.session_state.show_sources and st.session_state.last_sources and st.session_state.last_chunks:
-            st.markdown("<div class='section-title'>Sources</div>", unsafe_allow_html=True)
-            source_columns = st.columns(2)
-            for index, chunk in enumerate(st.session_state.last_chunks):
-                with source_columns[index % 2]:
-                    render_source_card(chunk)
-
-        if st.session_state.debug_mode and st.session_state.last_chunks:
-            st.markdown("<div class='section-title'>Debug</div>", unsafe_allow_html=True)
-            for index, chunk in enumerate(st.session_state.last_chunks, start=1):
-                label = f"Chunk {index} • {chunk.get('source', 'Uploaded PDF')}"
-                with st.expander(label):
-                    st.write(chunk.get("text", ""))
-
-with quiz_tab:
-    st.subheader("Quiz")
-    if not st.session_state.pdf_loaded:
-        st.info("Upload and process a PDF first.")
-    else:
-        quiz_controls = st.columns([1, 1, 1.2])
-        with quiz_controls[0]:
-            st.session_state.quiz_count = st.selectbox("Questions", [5, 10], index=[5, 10].index(st.session_state.quiz_count))
-        with quiz_controls[1]:
-            st.session_state.quiz_difficulty = st.selectbox("Difficulty", ["easy", "medium", "hard"], index=["easy", "medium", "hard"].index(st.session_state.quiz_difficulty))
-        with quiz_controls[2]:
-            if st.button("Generate Quiz", use_container_width=True):
-                with st.spinner("Generating quiz..."):
-                    generate_quiz(st.session_state.quiz_count)
-
-        if st.session_state.quiz_questions:
-            download_columns = st.columns(2)
-            with download_columns[0]:
-                st.download_button(
-                    "Download JSON",
-                    data=quiz_as_json(st.session_state.quiz_questions),
-                    file_name="smart_study_quiz.json",
-                    mime="application/json",
-                    use_container_width=True,
-                )
-            with download_columns[1]:
-                st.download_button(
-                    "Download Markdown",
-                    data=quiz_as_markdown(st.session_state.quiz_questions),
-                    file_name="smart_study_quiz.md",
-                    mime="text/markdown",
-                    use_container_width=True,
-                )
-
-            for index, question in enumerate(st.session_state.quiz_questions, start=1):
-                render_quiz_card(index, question)
+def render_section_quiz(section: StudySection) -> None:
+    correct = 0
+    scorable = 0
+    for index, question in enumerate(st.session_state.section_quiz, start=1):
+        st.markdown(f"**{index}. {question['question']}**")
+        key = f"quiz-answer-{section.section_number}-{index}"
+        if question["type"] in {"multiple_choice", "true_false"}:
+            answer = st.radio("Answer", question["options"], key=key, label_visibility="collapsed")
+            st.session_state.section_quiz_answers[index] = answer
+            scorable += 1
+            if answer == question["answer"]:
+                correct += 1
         else:
-            st.info("Generate a quiz to view questions.")
+            answer = st.text_area("Short answer", key=key, height=80)
+            st.session_state.section_quiz_answers[index] = answer
+        st.caption(source_label(section, question.get("source_page")))
 
-with ocr_tab:
-    st.subheader("OCR")
-    ocr_file = st.file_uploader(
-        "Upload scanned PDF or image",
-        type=["pdf", "png", "jpg", "jpeg"],
-        key="ocr_upload",
-    )
-    ocr_action_col, ocr_status_col = st.columns([1, 2])
-    with ocr_action_col:
-        extract_clicked = st.button("Extract Text", use_container_width=True, disabled=ocr_file is None)
-    with ocr_status_col:
-        if extract_clicked:
-            with st.spinner("Running OCR..."):
-                success, message = handle_ocr_request(ocr_file)
-            st.session_state.ocr_status = message
-            if success:
-                st.success(message)
-            elif message == "Tesseract is not installed.":
-                st.error("Tesseract is not installed.")
-                st.caption("Install the native `tesseract` binary to enable OCR.")
-            elif message == "OCR is not installed. Install pytesseract and Pillow.":
-                st.error("OCR is not installed.")
-                st.caption("Install `pytesseract` and `Pillow` to enable OCR.")
+    if st.button("Submit quiz"):
+        score = round((correct / scorable) * 100) if scorable else 100
+        st.session_state.section_quiz_score = score
+        st.session_state.progress.quiz_scores.append(float(score))
+    if st.session_state.section_quiz_score is not None:
+        st.success(f"Score: {st.session_state.section_quiz_score}%")
+        with st.expander("Review answers"):
+            for index, question in enumerate(st.session_state.section_quiz, start=1):
+                st.write(f"{index}. Correct answer: {question['answer']}")
+
+
+def render_ask_ai() -> None:
+    st.subheader("AI Tutor")
+    st.caption("Ask general questions, request examples, or get help understanding a topic.")
+    prompts = [
+        "Explain recursion with an example",
+        "Help me prepare for an algorithms exam",
+        "Explain Big O notation simply",
+        "Create practice questions",
+    ]
+    prompt_cols = st.columns(4)
+    for index, prompt_text in enumerate(prompts):
+        with prompt_cols[index]:
+            st.markdown(f"<div class='prompt-card'>{html.escape(prompt_text)}</div>", unsafe_allow_html=True)
+
+    if st.button("Clear Chat"):
+        st.session_state.ask_ai_history = []
+        st.rerun()
+
+    for message in st.session_state.ask_ai_history:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+
+    prompt = st.chat_input("Ask a general study question")
+    if prompt:
+        with st.chat_message("user"):
+            st.write(prompt)
+        result = GeneralAIService().ask(st.session_state.ask_ai_history, prompt)
+        with st.chat_message("assistant"):
+            st.write(result["answer"])
+            if result["provider"] == "none":
+                st.caption("Setup needed: add OPENAI_API_KEY or GROQ_API_KEY.")
             else:
-                st.info(message)
-        elif st.session_state.ocr_status:
-            st.caption(st.session_state.ocr_status)
+                st.caption(f"Provider: {result['provider']}")
+        st.session_state.ask_ai_history.extend(
+            [{"role": "user", "content": prompt}, {"role": "assistant", "content": result["answer"]}]
+        )
 
-    st.text_area(
-        "Extracted text",
-        value=st.session_state.ocr_text,
-        height=320,
-        placeholder="Extracted text will appear here.",
-    )
 
-with results_tab:
-    st.subheader("Results")
-    results_df = load_benchmark_results()
-    if results_df is None or results_df.empty:
-        st.info("No benchmark results yet.")
-    else:
-        best_accuracy = results_df["accuracy"].max() if "accuracy" in results_df else 0.0
-        best_grounding = results_df["grounding_score"].max() if "grounding_score" in results_df else 0.0
-        best_response = results_df["avg_response_time_sec"].min() if "avg_response_time_sec" in results_df else 0.0
+def all_study_context() -> str:
+    lines: list[str] = []
+    for section in st.session_state.sections:
+        lines.append(f"{section.title}\n{section_context(section)}")
+    return "\n\n".join(lines)
 
-        metric_columns = st.columns(3)
-        with metric_columns[0]:
-            render_panel_card("Best accuracy", f"{best_accuracy:.3f}")
-        with metric_columns[1]:
-            render_panel_card("Grounding", f"{best_grounding:.3f}")
-        with metric_columns[2]:
-            render_panel_card("Response time", f"{best_response:.3f}s")
 
-        st.dataframe(results_df, use_container_width=True, hide_index=True)
+def render_final_exam() -> None:
+    st.subheader("Final Exam")
+    if not has_pdf():
+        st.info("Upload and process a PDF first.")
+        return
 
-    st.code("python main_experiment.py --dataset local")
+    cols = st.columns(2)
+    question_count = cols[0].number_input("Questions", min_value=3, max_value=25, value=10)
+    difficulty = cols[1].selectbox("Difficulty", ["mixed", "easy", "medium", "hard"])
+    if st.button("Generate AI final exam", type="primary"):
+        with st.spinner("Generating final exam..."):
+            st.session_state.final_exam = ExamService().generate_final_exam(
+                all_study_context(),
+                ExamOptions(question_count=int(question_count), difficulty=difficulty),
+            )
 
-with about_tab:
-    st.subheader("About")
-    left_col, right_col, limit_col = st.columns(3)
-    with left_col:
-        st.markdown("**What it does**")
-        st.markdown("- Upload PDFs")
-        st.markdown("- Ask questions")
-        st.markdown("- Generate quizzes")
-        st.markdown("- Show sources")
-    with right_col:
-        st.markdown("**How RAG works**")
-        st.markdown("- PDF → Chunks")
-        st.markdown("- Embeddings")
-        st.markdown("- Vector Search")
-        st.markdown("- Answer")
-    with limit_col:
-        st.markdown("**Current limitations**")
-        st.markdown("- Quality depends on PDF text")
-        st.markdown("- Real embeddings are recommended")
-        st.markdown("- OCR quality depends on scan quality")
+    exam = st.session_state.final_exam
+    if not exam:
+        return
+    if exam.get("fallback_used"):
+        st.warning(exam.get("fallback_note", "Fallback exam was used."))
+    st.markdown(f"### {exam.get('title', 'AI Final Exam')}")
+    for question in exam.get("questions", []):
+        with st.expander(f"{question.get('id')}. {question.get('question')}"):
+            for option in question.get("options", []):
+                st.write(f"- {option}")
+            st.success(f"Answer: {question.get('answer')}")
+            st.caption(f"Topic: {question.get('topic', 'General')}")
+    score = st.slider("Score", min_value=0, max_value=100, value=85)
+    if st.button("Save final exam score"):
+        st.session_state.progress.final_exam_score = float(score)
+        st.success("Final exam score saved.")
+    correct = round(len(exam.get("questions", [])) * score / 100)
+    wrong = max(0, len(exam.get("questions", [])) - correct)
+    cols = st.columns(3)
+    cols[0].metric("Score", f"{score}%")
+    cols[1].metric("Correct answers", correct)
+    cols[2].metric("Wrong answers", wrong)
+    review = recommended_review_sections()
+    if review:
+        card("Suggested review sections", html.escape(", ".join(review)))
+
+
+def overall_progress() -> float:
+    total = len(st.session_state.sections)
+    if total == 0:
+        return 0.0
+    return len(st.session_state.progress.completed_sections) / total * 100
+
+
+def render_dashboard() -> None:
+    st.subheader("Dashboard")
+    if not has_pdf():
+        st.info("Upload and process a PDF first.")
+        return
+
+    progress = st.session_state.progress
+    cols = st.columns(4)
+    cols[0].metric("Learning Progress", f"{overall_progress():.0f}%")
+    cols[1].metric("Completed Sections", f"{len(progress.completed_sections)}/{len(st.session_state.sections)}")
+    cols[2].metric("Quiz Average", f"{ProgressService.quiz_average(progress):.0f}%")
+    readiness = progress.final_exam_score if progress.final_exam_score is not None else overall_progress()
+    cols[3].metric("Exam Readiness", f"{readiness:.0f}%")
+    st.progress(overall_progress() / 100)
+
+    total_sections = max(1, len(st.session_state.sections))
+    average_seconds = progress.actual_study_seconds // total_sections
+    with st.expander("Study time"):
+        cols = st.columns(2)
+        cols[0].metric("Total study time", format_seconds(progress.actual_study_seconds))
+        cols[1].metric("Average per section", format_seconds(average_seconds))
+
+    review = recommended_review_sections()
+    next_section = next_recommended_section()
+    recommendation = []
+    if review:
+        recommendation.append(f"Review {review[0]} before taking the final exam again.")
+    if next_section:
+        recommendation.append(f"Recommended next section: {next_section.title}.")
+    card("Recommendations", html.escape(" ".join(recommendation) if recommendation else "Keep reviewing completed sections."))
+
+    if st.button("Review Weak Topics", type="primary"):
+        st.session_state.weak_topic_review = build_weak_topic_review()
+    if st.session_state.weak_topic_review:
+        st.markdown(st.session_state.weak_topic_review)
+
+
+def build_weak_topic_review() -> str:
+    review_sections = recommended_review_sections()
+    if not review_sections:
+        return "All sections are complete. Revisit the final exam answers and retake any quiz below 80%."
+
+    quiz_average = ProgressService.quiz_average(st.session_state.progress)
+    plans = ["### Weak Topic Review Plan"]
+    for title in review_sections:
+        section = next((item for item in st.session_state.sections if item.title == title), None)
+        if section is None:
+            continue
+        topic = section.key_concepts[0] if section.key_concepts else section.title
+        reason = "your quiz average is low" if quiz_average and quiz_average < 80 else "this section is not completed yet"
+        plans.append(
+            f"- **Review {html.escape(topic)}** — {reason} in Section {section.section_number}. "
+            f"Re-read {section.page_label.lower()} and retake the section quiz."
+        )
+    return "\n".join(plans)
+
+
+def recommended_review_sections() -> list[str]:
+    if not has_pdf():
+        return []
+    progress = st.session_state.progress
+    return [
+        section.title
+        for section in st.session_state.sections
+        if section.section_number not in progress.completed_sections
+    ][:3]
+
+
+def next_recommended_section() -> StudySection | None:
+    if not has_pdf():
+        return None
+    for section in st.session_state.sections:
+        if section.section_number not in st.session_state.progress.completed_sections:
+            return section
+    return None
+
+
+PAGE_RENDERERS = {
+    "Upload": render_upload,
+    "Study Plan": render_study_plan,
+    "Study Mode": render_study_mode,
+    "AI Tutor": render_ask_ai,
+    "Final Exam": render_final_exam,
+    "Dashboard": render_dashboard,
+}
+
+
+inject_custom_css()
+init_state()
+render_top_nav()
+render_status_bar()
+
+PAGE_RENDERERS[st.session_state.current_page]()

@@ -22,6 +22,6 @@ class DocumentChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def citation_label(self) -> str:
-        """Return a compact source label for citation rendering."""
+        """Return a compact source label for user-facing citation rendering."""
         source = self.source_id or str(self.metadata.get("source", "") or "document")
-        return f"{source}, page {self.page_number}, chunk {self.chunk_id}"
+        return f"{source}, page {self.page_number}"

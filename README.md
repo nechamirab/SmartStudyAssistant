@@ -1,80 +1,50 @@
-# Smart Study Assistant — RAG Platform
+# Smart Study Assistant
 
-Smart Study Assistant is a clean, demo-ready PDF question answering app with a LangChain-based RAG pipeline.
+Smart Study Assistant is a Streamlit MVP for studying from uploaded PDFs. It focuses on a stable student workflow instead of experimental RAG controls.
 
-## What the app does
-- Upload a PDF document
-- Load document pages with LangChain
-- Split text with `RecursiveCharacterTextSplitter`
-- Create semantic embeddings with `sentence-transformers/all-MiniLM-L6-v2`
-- Store vectors in FAISS
-- Retrieve grounded context for question answering
-- Return answers with citations
-- Generate simple document-based quiz questions
+## MVP Features
+- Upload a PDF and extract text safely with PyMuPDF plus pypdf fallback.
+- Generate a study plan with section cards, page ranges, estimated time, difficulty, summaries, concepts, and progress status.
+- Study section by section while viewing rendered PDF pages.
+- Download the current section PDF.
+- Generate a section explanation and quiz.
+- Ask a general AI tutor question outside the PDF context.
+- Generate an AI final exam with safe fallback behavior.
+- View dashboard progress, quiz average, actual study time, weak topics, and final exam score.
 
-## LangChain-based RAG Pipeline
-The main app flow now uses LangChain for the core retrieval pipeline:
+## Navigation
+The Streamlit app uses these pages:
 
-`PDF -> PyPDFLoader -> RecursiveCharacterTextSplitter -> HuggingFaceEmbeddings -> FAISS -> Retriever -> Grounded Answer with Citations`
+`Upload -> Study Plan -> Study Mode -> Ask AI -> Final Exam -> Dashboard`
 
-- LangChain loads PDFs page by page
-- `RecursiveCharacterTextSplitter` creates overlapping chunks
-- HuggingFace `all-MiniLM-L6-v2` embeddings provide real semantic retrieval
-- FAISS stores vectors in memory
-- The retriever finds relevant chunks
-- The app answers only from retrieved context and shows citations
-
-Mock embeddings are still available for offline demos and testing.
+The old RAG Check, separate Quiz tab, OCR tab, benchmark Results tab, and explanation level controls are intentionally not part of this MVP.
 
 ## Installation
 ```bash
 pip install -r requirements.txt
 ```
 
-## Running the app
+## Running The App
 ```bash
 streamlit run ui/streamlit_app.py
 ```
 
-The first run may download the HuggingFace model.
+## Optional AI Keys
+General Ask AI and Final Exam generation select providers in this order:
 
-## Running the benchmark
-Legacy benchmark:
+1. `OPENAI_API_KEY`
+2. `GROQ_API_KEY`
+3. Clear setup/fallback message when no key exists
 
+No real API calls are made by the unit tests.
+
+## Verification
 ```bash
-python main_experiment.py --dataset local
+python -m py_compile $(find . -name '*.py' -not -path './.git/*')
+python -m unittest discover -s tests
 ```
-
-LangChain UI-aligned benchmark:
-
-```bash
-python main_experiment.py --dataset local --rag-backend langchain --embedding-model sentence-transformers/all-MiniLM-L6-v2 --chunk-size 500 --overlap 50 --top-k 3
-```
-
-Benchmark outputs are written to `results/benchmark_results.csv` and `results/benchmark_summary.md`.
-
-## Using the app
-1. Run the Streamlit UI.
-2. Upload a text-based PDF.
-3. Adjust chunk size, overlap, top-k, and embedding model from the sidebar if needed.
-4. Process the PDF.
-5. Ask a question in the `Ask Questions` tab.
-6. Review citations and retrieved chunks.
-7. Generate a quiz from the processed document if needed.
-
-## Troubleshooting
-- `sentence-transformers` install issue:
-  Reinstall with `pip install -r requirements.txt`. Some systems need an updated `pip`, `setuptools`, and `wheel`.
-- `faiss-cpu` install issue:
-  Use a supported Python version and platform wheel. If FAISS is unavailable temporarily, the app cannot build the LangChain vector store.
-- Slow first model download:
-  The first HuggingFace model load can take time because the model is downloaded locally.
-- Weak answer quality:
-  Reprocess the PDF after changing chunk settings or the embedding model.
-- No internet or model download blocked:
-  Enable mock embeddings from the sidebar to keep the demo running without real embeddings.
 
 ## Notes
-- The Streamlit UI uses the LangChain RAG pipeline.
-- The legacy benchmark path still exists for compatibility.
-- Text-based PDFs work best. Scanned PDFs may need OCR before retrieval becomes reliable.
+- Chunk IDs remain internal and are not shown in the normal UI.
+- The older benchmark and LangChain modules remain in the repo for compatibility with existing tests and experiments.
+- Text-based PDFs work best. Scanned PDFs may need separate OCR preprocessing.

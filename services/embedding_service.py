@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import Any, List
 
 from core.config import EMBEDDING_MODEL, EMBEDDING_PROVIDER, MOCK_EMBEDDING_DIM
+from embeddings.providers import EmbeddingProviderError, EmbeddingProviderRegistry
 
 
 class EmbeddingError(Exception):
@@ -32,10 +33,21 @@ class EmbeddingService:
     - OpenAI embeddings for real semantic search
     """
 
-    def __init__(self, provider: str = EMBEDDING_PROVIDER, model: str = EMBEDDING_MODEL):
+    def __init__(
+        self,
+        provider: str = EMBEDDING_PROVIDER,
+        model: str = EMBEDDING_MODEL,
+        cache_enabled: bool = True,
+        fallback_to_mock: bool = True,
+        **_: Any,
+    ):
         self.provider = provider
         self.model = model
+        self.cache_enabled = cache_enabled
+        self.fallback_to_mock = fallback_to_mock
+        self.embedding_dimension = 0
         self._sentence_transformer = None
+        self._provider = None
 
     def embed_texts(self, chunks: List) -> List[EmbeddingResult]:
         """
@@ -49,14 +61,18 @@ class EmbeddingService:
         """
         results: List[EmbeddingResult] = []
 
-        for chunk in chunks:
-            vector = self._embed_text(chunk.text)
-            results.append(
-                EmbeddingResult(
-                    chunk_id=chunk.chunk_id,
-                    vector=vector,
-                )
-            )
+        try:
+            provider_vectors = self._embed_texts_with_provider([chunk.text for chunk in chunks])
+        except EmbeddingProviderError:
+            if not self.fallback_to_mock:
+                raise EmbeddingError("Embedding provider failed.")
+            self.provider = "mock"
+            self._provider = None
+            provider_vectors = [self._mock_embed(chunk.text) for chunk in chunks]
+
+        for chunk, vector in zip(chunks, provider_vectors):
+            self.embedding_dimension = len(vector)
+            results.append(EmbeddingResult(chunk_id=chunk.chunk_id, vector=vector))
 
         return results
 
@@ -74,7 +90,21 @@ class EmbeddingService:
         if not query:
             raise EmbeddingError("Query cannot be empty.")
 
-        return self._embed_text(query)
+        vector = self._embed_text(query)
+        self.embedding_dimension = len(vector)
+        return vector
+
+    def _embed_texts_with_provider(self, texts: List[str]) -> List[List[float]]:
+        if self._provider is not None:
+            return self._provider.embed_texts(texts)
+        if self.provider in {"minilm", "sentence-transformers"}:
+            self._provider = EmbeddingProviderRegistry.create(
+                self.provider,
+                model_name=self.model,
+                cache_enabled=self.cache_enabled,
+            )
+            return self._provider.embed_texts(texts)
+        return [self._embed_text(text) for text in texts]
 
     def _embed_text(self, text: str) -> List[float]:
         """

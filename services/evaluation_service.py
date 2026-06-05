@@ -31,7 +31,8 @@ class EvaluationResult:
     """Complete evaluation for one question."""
     question: str
     accuracy: float
-    precision_at_k: float
+    precision_at_k: Optional[float]
+    recall_at_k: Optional[float]
     grounding_score: float
     response_time: float
     retrieved_chunks: List[str]
@@ -93,7 +94,7 @@ class EvaluationService:
         retrieved_chunks: List[str],
         expected_source_text: str,
         k: Optional[int] = None,
-    ) -> float:
+    ) -> Optional[float]:
         """
         Precision@K: What fraction of top-K retrieved chunks contain the answer source?
 
@@ -115,7 +116,7 @@ class EvaluationService:
             Precision value between 0 and 1
         """
         if not retrieved_chunks or not expected_source_text:
-            return 0.0
+            return None
 
         # Use all chunks if k not specified
         if k is None:
@@ -135,6 +136,17 @@ class EvaluationService:
         # Precision = matches / total chunks retrieved
         precision = matches / len(top_k_chunks) if top_k_chunks else 0.0
         return min(precision, 1.0)
+
+    @staticmethod
+    def calculate_recall_at_k(
+        retrieved_chunks: List[str],
+        expected_source_text: str,
+        k: Optional[int] = None,
+    ) -> Optional[float]:
+        if not retrieved_chunks or not expected_source_text:
+            return None
+        precision = EvaluationService.calculate_precision_at_k(retrieved_chunks, expected_source_text, k)
+        return None if precision is None else min(1.0, precision * len(retrieved_chunks[: k or len(retrieved_chunks)]))
 
     @staticmethod
     def calculate_grounding_score(
@@ -234,6 +246,9 @@ class EvaluationService:
             precision_at_k = EvaluationService.calculate_precision_at_k(
                 retrieved_chunks, expected_source_text
             )
+            recall_at_k = EvaluationService.calculate_recall_at_k(
+                retrieved_chunks, expected_source_text
+            )
             grounding = EvaluationService.calculate_grounding_score(
                 generated_answer, retrieved_chunks
             )
@@ -242,6 +257,7 @@ class EvaluationService:
                 question=question,
                 accuracy=accuracy,
                 precision_at_k=precision_at_k,
+                recall_at_k=recall_at_k,
                 grounding_score=grounding,
                 response_time=response_time,
                 retrieved_chunks=retrieved_chunks,
@@ -250,11 +266,12 @@ class EvaluationService:
                 success=True,
             )
         except Exception as e:
-            print(f"  ⚠️  Error evaluating question: {e}")
+            print(f"Error evaluating question: {e}")
             return EvaluationResult(
                 question=question,
                 accuracy=0.0,
-                precision_at_k=0.0,
+                precision_at_k=None,
+                recall_at_k=None,
                 grounding_score=0.0,
                 response_time=response_time,
                 retrieved_chunks=[],
@@ -286,11 +303,20 @@ class AggregatedMetrics:
         return sum(r.accuracy for r in self.results) / self.count
 
     @property
-    def precision_at_k(self) -> float:
+    def precision_at_k(self) -> Optional[float]:
         """Average Precision@K."""
-        if not self.results:
-            return 0.0
-        return sum(r.precision_at_k for r in self.results) / self.count
+        values = [r.precision_at_k for r in self.results if r.precision_at_k is not None]
+        if not values:
+            return None
+        return sum(values) / len(values)
+
+    @property
+    def recall_at_k(self) -> Optional[float]:
+        """Average Recall@K when retrieval labels are available."""
+        values = [r.recall_at_k for r in self.results if r.recall_at_k is not None]
+        if not values:
+            return None
+        return sum(values) / len(values)
 
     @property
     def grounding_score(self) -> float:
@@ -310,8 +336,10 @@ class AggregatedMetrics:
         """Convert to dictionary for CSV export."""
         return {
             "accuracy": round(self.accuracy, 4),
-            "precision_at_k": round(self.precision_at_k, 4),
+            "precision_at_k": None if self.precision_at_k is None else round(self.precision_at_k, 4),
+            "recall_at_k": None if self.recall_at_k is None else round(self.recall_at_k, 4),
             "grounding_score": round(self.grounding_score, 4),
             "avg_response_time_sec": round(self.avg_response_time, 3),
             "questions_successful": f"{self.successful}/{self.count}",
+            "retrieval_labels_available": sum(1 for result in self.results if result.precision_at_k is not None),
         }

@@ -30,9 +30,12 @@ def define_experiments(
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
     chunk_size: int = 500,
     chunk_overlap: int = 50,
+    overlap: int | None = None,
     top_k: int = 3,
 ) -> List[ExperimentConfig]:
     """Define a simple set of benchmark configurations."""
+    if overlap is not None:
+        chunk_overlap = overlap
     return [
         ExperimentConfig(
             chunk_size=chunk_size,
@@ -43,6 +46,18 @@ def define_experiments(
             answer_mode="retrieved_chunks",
         ),
     ]
+
+
+def format_metric(value: float | None, digits: int = 3) -> str:
+    if value is None:
+        return "not_available"
+    return f"{value:.{digits}f}"
+
+
+def format_metric_short(value: float | None, digits: int = 3) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.{digits}f}"
 
 
 def save_results_to_csv(results: List[ExperimentResult], output_path: Path) -> None:
