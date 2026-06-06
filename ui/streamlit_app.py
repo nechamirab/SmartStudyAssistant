@@ -292,18 +292,36 @@ def source_label(section: StudySection, page: int | None = None) -> str:
 
 def extract_pdf(uploaded_file: Any) -> None:
     pdf_bytes = uploaded_file.getvalue()
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
-        tmp.write(pdf_bytes)
-        tmp.flush()
-        pages = PdfService().extract_pages(tmp.name)
 
-    st.session_state.pending_pdf_bytes = pdf_bytes
-    st.session_state.pending_pdf_name = uploaded_file.name
-    st.session_state.pending_pages = pages
-    st.session_state.pending_sections = StudyService().generate_study_plan(pages)
-    if not st.session_state.pending_sections:
-        raise PdfExtractionError("No readable study sections could be created from this PDF.")
-    st.session_state.upload_message = f"Processed {uploaded_file.name}. Ready to generate a study plan."
+    # Create a temporary file with delete=False so that Windows doesn't lock it completely
+    tmp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    tmp_path = Path(tmp_file.name)
+
+    try:
+        # Write the bytes and close the file immediately to release the lock
+        tmp_file.write(pdf_bytes)
+        tmp_file.close()
+
+        # Now the text extraction functions will be able to access the file without permission issues
+        pages = PdfService().extract_pages(str(tmp_path))
+
+        st.session_state.pending_pdf_bytes = pdf_bytes
+        st.session_state.pending_pdf_name = uploaded_file.name
+        st.session_state.pending_pages = pages
+        st.session_state.pending_sections = StudyService().generate_study_plan(pages)
+
+        if not st.session_state.pending_sections:
+            raise PdfExtractionError("No readable study sections could be created from this PDF.")
+
+        st.session_state.upload_message = f"Processed {uploaded_file.name}. Ready to generate a study plan."
+
+    finally:
+        # Manually delete the temporary file from the disk at the end of the process.
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass  # Prevents crash if deletion fails for some reason
 
 
 def generate_study_plan_from_pending() -> None:
@@ -539,14 +557,25 @@ def render_study_mode() -> None:
         )
         st.progress((section.section_number - 1) / max(1, len(st.session_state.sections)))
         st.metric("Actual study time", format_seconds(st.session_state.progress.actual_study_seconds))
-        timer_cols = st.columns(3)
-        if timer_cols[0].button("Start Session"):
-            st.session_state.progress = ProgressService.start_timer(st.session_state.progress)
-            st.rerun()
-        if timer_cols[1].button("Pause"):
-            st.session_state.progress = ProgressService.pause_timer(st.session_state.progress)
-            st.rerun()
-        if timer_cols[2].button("Finish Section", type="primary"):
+
+        timer_cols = st.columns([1.4, 0.8, 1.4])
+        is_running = st.session_state.progress.timer_running
+        has_started = st.session_state.progress.actual_study_seconds > 0
+
+        if not is_running:
+            btn_label = "Resume Session" if has_started else "Start Session"
+            if timer_cols[0].button(btn_label, type="primary", use_container_width=True):
+                st.session_state.progress = ProgressService.start_timer(st.session_state.progress)
+                st.rerun()
+        else:
+            if timer_cols[0].button("Pause ⏸", use_container_width=True):
+                st.session_state.progress = ProgressService.pause_timer(st.session_state.progress)
+                st.rerun()
+            timer_cols[1].markdown(
+                "<div style='margin-top: 5px; color: #0EA5A4; font-weight: bold; text-align: center;'>⏳ Run...</div>",
+                unsafe_allow_html=True)
+
+        if timer_cols[2].button("Finish Section", use_container_width=True):
             st.session_state.progress = ProgressService.finish_section(
                 st.session_state.progress,
                 section.section_number,
