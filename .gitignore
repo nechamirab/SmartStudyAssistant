@@ -61,3 +61,5 @@ data/cache/
 # OS
 .DS_Store
 Thumbs.db
+
+ui/.streamlit/secrets.toml
