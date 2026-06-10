@@ -45,6 +45,7 @@ ocr_uploads/
 .vectorstores/
 cache/
 temp/
+.smartstudy_progress.json
 *.csv
 results/*.csv
 results/*.json

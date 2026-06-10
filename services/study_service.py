@@ -72,6 +72,79 @@ class StudyService:
             )
         return sections
 
+    def generate_study_plan_for_sessions(self, pages: list[Any], session_count: int) -> list[StudySection]:
+        usable_pages = [page for page in pages if (getattr(page, "text", "") or "").strip()]
+        if not usable_pages:
+            return []
+
+        target_count = max(1, min(int(session_count or 1), len(usable_pages)))
+        base_size, extra = divmod(len(usable_pages), target_count)
+        sections: list[StudySection] = []
+        cursor = 0
+
+        for index in range(target_count):
+            group_size = base_size + (1 if index < extra else 0)
+            group = usable_pages[cursor : cursor + group_size]
+            cursor += group_size
+            start_page = int(getattr(group[0], "page_number", cursor + 1))
+            end_page = int(getattr(group[-1], "page_number", start_page))
+            text = self._clean(" ".join(getattr(page, "text", "") or "" for page in group))
+            concepts = self._key_concepts(text)
+            sections.append(
+                StudySection(
+                    section_number=len(sections) + 1,
+                    title=self._title(group, len(sections) + 1, start_page, end_page),
+                    start_page=start_page,
+                    end_page=end_page,
+                    estimated_minutes=self._estimated_minutes(text),
+                    difficulty=self._difficulty(text),
+                    summary=self._summary(text, start_page, end_page),
+                    learning_objectives=self._learning_objectives(text, concepts, start_page, end_page),
+                    key_concepts=concepts,
+                )
+            )
+        return sections
+
+    @staticmethod
+    def readable_page_count(pages: list[Any]) -> int:
+        return sum(1 for page in pages if (getattr(page, "text", "") or "").strip())
+
+    @classmethod
+    def suggest_session_count(cls, text_or_pages: str | list[Any], page_count: int | None = None) -> int:
+        text = cls._suggestion_text(text_or_pages)
+        words = re.findall(r"\b\w+\b", text)
+        effective_page_count = page_count
+        if effective_page_count is None and isinstance(text_or_pages, list):
+            effective_page_count = cls.readable_page_count(text_or_pages)
+        return cls.suggest_session_count_from_size(len(words), effective_page_count)
+
+    @staticmethod
+    def suggest_session_count_from_size(word_count: int, page_count: int | None = None) -> int:
+        if word_count <= 0:
+            suggested = 5
+        elif word_count < 1500:
+            suggested = 3
+        elif word_count < 3000:
+            suggested = 5
+        elif word_count < 6000:
+            suggested = 7
+        elif word_count < 10000:
+            suggested = 10
+        elif word_count < 15000:
+            suggested = 12
+        else:
+            suggested = 15
+
+        if page_count is not None and page_count > 24:
+            suggested = max(suggested, min(15, round(page_count / 3)))
+        return max(3, min(15, suggested))
+
+    @staticmethod
+    def _suggestion_text(text_or_pages: str | list[Any]) -> str:
+        if isinstance(text_or_pages, str):
+            return text_or_pages
+        return " ".join(getattr(page, "text", "") or "" for page in text_or_pages)
+
     @staticmethod
     def section_text(pages: list[Any], section: StudySection) -> str:
         selected = [

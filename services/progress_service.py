@@ -10,8 +10,10 @@ from typing import Any
 class ProgressState:
     completed_sections: set[int] = field(default_factory=set)
     quiz_scores: list[float] = field(default_factory=list)
+    section_quiz_scores: dict[int, float] = field(default_factory=dict)
     actual_study_seconds: int = 0
     weak_topics: list[str] = field(default_factory=list)
+    weak_sections: list[str] = field(default_factory=list)
     final_exam_score: float | None = None
     timer_running: bool = False
     timer_started_at: float | None = None
@@ -33,8 +35,13 @@ class ProgressService:
             return ProgressState(
                 completed_sections={int(value) for value in data.get("completed_sections", [])},
                 quiz_scores=[float(value) for value in data.get("quiz_scores", [])],
+                section_quiz_scores={
+                    int(key): float(value)
+                    for key, value in dict(data.get("section_quiz_scores", {}) or {}).items()
+                },
                 actual_study_seconds=max(0, int(data.get("actual_study_seconds", 0))),
                 weak_topics=[str(value) for value in data.get("weak_topics", [])],
+                weak_sections=[str(value) for value in data.get("weak_sections", [])],
                 final_exam_score=(
                     None if data.get("final_exam_score") is None else float(data.get("final_exam_score"))
                 ),
@@ -51,8 +58,10 @@ class ProgressService:
         return {
             "completed_sections": sorted(progress.completed_sections),
             "quiz_scores": progress.quiz_scores,
+            "section_quiz_scores": {str(key): value for key, value in sorted(progress.section_quiz_scores.items())},
             "actual_study_seconds": progress.actual_study_seconds,
             "weak_topics": progress.weak_topics,
+            "weak_sections": progress.weak_sections,
             "final_exam_score": progress.final_exam_score,
             "timer_running": progress.timer_running,
             "timer_started_at": progress.timer_started_at,
@@ -63,6 +72,13 @@ class ProgressService:
         if not progress.timer_running:
             progress.timer_running = True
             progress.timer_started_at = now if now is not None else time.time()
+        return progress
+
+    @staticmethod
+    def restart_timer(progress: ProgressState, now: float | None = None) -> ProgressState:
+        progress.actual_study_seconds = 0
+        progress.timer_running = True
+        progress.timer_started_at = now if now is not None else time.time()
         return progress
 
     @staticmethod
@@ -81,7 +97,15 @@ class ProgressService:
         return progress
 
     @staticmethod
+    def elapsed_seconds(progress: ProgressState, now: float | None = None) -> int:
+        if progress.timer_running and progress.timer_started_at is not None:
+            current = now if now is not None else time.time()
+            return progress.actual_study_seconds + max(0, int(current - progress.timer_started_at))
+        return progress.actual_study_seconds
+
+    @staticmethod
     def quiz_average(progress: ProgressState) -> float:
-        if not progress.quiz_scores:
+        scores = list(progress.section_quiz_scores.values()) or progress.quiz_scores
+        if not scores:
             return 0.0
-        return sum(progress.quiz_scores) / len(progress.quiz_scores)
+        return sum(scores) / len(scores)
