@@ -8,6 +8,17 @@ Main workflow:
 
 The project is now organized around the student experience instead of exposing RAG benchmark controls in the main app.
 
+## Product Identity
+
+Smart Study Assistant is an AI-powered PDF study assistant for students. The main product is not a RAG benchmark dashboard; RAG and document-grounded AI are technical foundations used behind the scenes to help students study from uploaded course material.
+
+The current MVP focuses on a complete learning loop: upload a PDF, generate configurable study sessions, study each session, ask the AI Tutor, practice with quizzes, take an interactive final exam, and review progress in the dashboard.
+
+Updated proposal documents:
+
+- [Project proposal outline](docs/project_proposal_outline.md)
+- [Hebrew project proposal](docs/project_proposal_he.md)
+
 ## Current MVP Features
 
 - Upload a PDF and extract text with PyMuPDF plus pypdf fallback.

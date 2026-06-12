@@ -28,25 +28,28 @@ def extract_pdf(uploaded_file: Any) -> None:
         tmp_file.write(pdf_bytes)
         tmp_file.close()
         pages = PdfService().extract_pages(str(tmp_path))
-
-        st.session_state.pending_pdf_bytes = pdf_bytes
-        st.session_state.pending_pdf_name = uploaded_file.name
-        st.session_state.pending_pages = pages
-        suggested = StudyService.suggest_session_count(pages)
-        st.session_state.suggested_session_count = suggested
-        st.session_state.selected_session_count = suggested
-        st.session_state.pending_sections = StudyService().generate_study_plan_for_sessions(pages, suggested)
-
-        if not st.session_state.pending_sections:
-            raise PdfExtractionError("No readable study sessions could be created from this PDF.")
-
-        st.session_state.upload_message = f"Processed {uploaded_file.name}. Ready to generate a study plan."
+        set_pending_pdf(pdf_bytes, uploaded_file.name, pages)
     finally:
         if tmp_path.exists():
             try:
                 tmp_path.unlink()
             except Exception:
                 pass
+
+
+def set_pending_pdf(pdf_bytes: bytes, pdf_name: str, pages: list[Any]) -> None:
+    st.session_state.pending_pdf_bytes = pdf_bytes
+    st.session_state.pending_pdf_name = pdf_name
+    st.session_state.pending_pages = pages
+    suggested = StudyService.suggest_session_count(pages)
+    st.session_state.suggested_session_count = suggested
+    st.session_state.selected_session_count = suggested
+    st.session_state.pending_sections = StudyService().generate_study_plan_for_sessions(pages, suggested)
+
+    if not st.session_state.pending_sections:
+        raise PdfExtractionError("No readable study sessions could be created from this PDF.")
+
+    st.session_state.upload_message = f"Processed {pdf_name}. Ready to generate a study plan."
 
 
 def generate_study_plan_from_pending() -> None:

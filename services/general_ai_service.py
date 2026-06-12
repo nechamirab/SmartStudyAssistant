@@ -4,6 +4,7 @@ import json
 import os
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -18,8 +19,13 @@ class GeneralAIService:
     """General tutor chat service with OpenAI-first, Groq-second provider selection."""
 
     GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+    DEFAULT_ENV_FILE = Path(__file__).resolve().parents[1] / "ui" / ".streamlit" / "_env"
+
+    def __init__(self, env_file: str | Path | None = DEFAULT_ENV_FILE) -> None:
+        self.env_file = Path(env_file) if env_file else None
 
     def select_provider(self) -> AIProvider | None:
+        self._load_local_env()
         openai_key = os.getenv("OPENAI_API_KEY", "").strip()
         if openai_key:
             return AIProvider("openai", openai_key, os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
@@ -27,6 +33,20 @@ class GeneralAIService:
         if groq_key:
             return AIProvider("groq", groq_key, os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"))
         return None
+
+    def _load_local_env(self) -> None:
+        if not self.env_file or not self.env_file.exists():
+            return
+
+        for line in self.env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("\"'")
+            if key and key not in os.environ:
+                os.environ[key] = value
 
     def ask(self, messages: list[dict[str, str]], question: str) -> dict[str, Any]:
         question = (question or "").strip()

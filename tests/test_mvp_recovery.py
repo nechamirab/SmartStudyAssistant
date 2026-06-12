@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from core.models import DocumentChunk, DocumentPage
@@ -12,6 +14,7 @@ from services.pdf_section_service import PdfSectionError, PdfSectionService
 from services.pdf_service import PdfExtractionError, PdfService
 from services.progress_service import ProgressService
 from services.study_service import StudyService
+from pages.upload_page import uploaded_file_signature
 
 
 def make_pdf_bytes() -> bytes:
@@ -56,6 +59,13 @@ class TestMVPRecovery(unittest.TestCase):
         self.assertTrue(images[0].startswith(b"\x89PNG"))
         self.assertEqual(PdfRenderService.render_pages(pdf_bytes, 10, 11), [])
 
+    def test_uploaded_folder_file_signature_preserves_relative_names(self):
+        class Uploaded:
+            name = "course/week1/lecture.pdf"
+            size = 123
+
+        self.assertEqual(uploaded_file_signature(Uploaded()), "course/week1/lecture.pdf:123")
+
     def test_study_plan_titles_and_next_section(self):
         pages = [
             DocumentPage(1, "INTRODUCTION TO DATABASES\nDatabases organize persistent records and queries."),
@@ -94,7 +104,7 @@ class TestMVPRecovery(unittest.TestCase):
         self.assertFalse(progress.timer_running)
 
     def test_general_ai_provider_selection(self):
-        service = GeneralAIService()
+        service = GeneralAIService(env_file=None)
         with patch.dict(os.environ, {"OPENAI_API_KEY": "openai", "GROQ_API_KEY": "groq"}, clear=True):
             self.assertEqual(service.select_provider().name, "openai")
         with patch.dict(os.environ, {"GROQ_API_KEY": "groq"}, clear=True):
@@ -103,6 +113,18 @@ class TestMVPRecovery(unittest.TestCase):
             result = service.ask([], "How should I study?")
         self.assertFalse(result["ok"])
         self.assertIn("OPENAI_API_KEY", result["answer"])
+
+    def test_general_ai_provider_can_load_streamlit_env_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = Path(tmpdir) / "_env"
+            env_file.write_text("OPENAI_API_KEY=test-key\nOPENAI_MODEL=test-model\n", encoding="utf-8")
+
+            with patch.dict(os.environ, {}, clear=True):
+                provider = GeneralAIService(env_file=env_file).select_provider()
+
+        self.assertEqual(provider.name, "openai")
+        self.assertEqual(provider.api_key, "test-key")
+        self.assertEqual(provider.model, "test-model")
 
     def test_source_labels_do_not_expose_chunk_ids(self):
         chunk = DocumentChunk(chunk_id="page_5_chunk_1", page_number=5, text="Evidence", source_id="notes.pdf")

@@ -11,6 +11,17 @@ from ui.workflow import extract_pdf, generate_study_plan_from_pending
 def render_upload() -> None:
     render_upload_hero()
     st.subheader("Upload PDF")
+    source = st.radio("PDF source", ["Upload file", "Upload folder"], horizontal=True)
+
+    if source == "Upload file":
+        render_file_upload()
+    else:
+        render_folder_upload()
+
+    render_pending_study_plan()
+
+
+def render_file_upload() -> None:
     uploaded_file = st.file_uploader("Choose a PDF", type=["pdf"])
 
     if uploaded_file is not None:
@@ -37,6 +48,38 @@ def render_upload() -> None:
         except Exception as exc:
             st.error(f"Could not process PDF safely: {exc}")
 
+
+def render_folder_upload() -> None:
+    uploaded_files = st.file_uploader(
+        "Choose a folder that contains PDFs",
+        type=["pdf"],
+        accept_multiple_files="directory",
+    )
+    if not uploaded_files:
+        st.info("Upload a folder, then choose one PDF from the uploaded files.")
+        return
+
+    uploaded_files = sorted(uploaded_files, key=lambda file: file.name.lower())
+    labels = [file.name for file in uploaded_files]
+    selected_label = st.selectbox("Choose a PDF from the uploaded folder", labels)
+    selected_file = uploaded_files[labels.index(selected_label)]
+    st.caption(f"{len(uploaded_files)} PDF file(s) uploaded from the folder.")
+
+    signature = uploaded_file_signature(selected_file)
+    button_label = "Reprocess selected PDF" if st.session_state.processed_upload_signature == signature else "Process selected PDF"
+    if st.button(button_label, type="primary"):
+        try:
+            with st.spinner("Extracting text from your PDF..."):
+                extract_pdf(selected_file)
+            st.session_state.processed_upload_signature = signature
+            st.success(st.session_state.upload_message)
+        except PdfExtractionError as exc:
+            st.error(f"PDF extraction failed: {exc}")
+        except Exception as exc:
+            st.error(f"Could not process PDF safely: {exc}")
+
+
+def render_pending_study_plan() -> None:
     if st.session_state.pending_pages:
         readable_pages = StudyService.readable_page_count(st.session_state.pending_pages)
         suggested = st.session_state.suggested_session_count or StudyService.suggest_session_count(

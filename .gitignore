@@ -64,3 +64,5 @@ data/cache/
 Thumbs.db
 
 ui/.streamlit/secrets.toml
+ui/.streamlit/_env
+ui/.streamlit/env
