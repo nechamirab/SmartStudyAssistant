@@ -92,6 +92,14 @@ def render_folder_upload() -> None:
 
 def render_pending_study_plan() -> None:
     if st.session_state.pending_pages:
+        if st.button(t("choose_another_pdf")):
+            st.session_state.pending_pages = []
+            st.session_state.pending_sections = []
+            st.session_state.pending_pdf_bytes = b""
+            st.session_state.pending_pdf_name = ""
+            st.session_state.processed_upload_signature = ""
+            st.rerun()
+
         readable_pages = StudyService.readable_page_count(st.session_state.pending_pages)
         suggested = st.session_state.suggested_session_count or StudyService.suggest_session_count(
             st.session_state.pending_pages

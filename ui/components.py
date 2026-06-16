@@ -76,6 +76,12 @@ def render_status_bar() -> None:
     else:
         status = t("no_pdf_loaded")
     st.markdown(f'<div class="status-bar">{status}</div>', unsafe_allow_html=True)
+    if has_pdf() and st.session_state.current_page != "Upload":
+        action_cols = st.columns([1, 5])
+        with action_cols[0]:
+            if st.button(t("change_pdf"), key="change-pdf", use_container_width=True):
+                st.session_state.current_page = "Upload"
+                st.rerun()
 
 
 def render_upload_hero() -> None:
