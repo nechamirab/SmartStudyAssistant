@@ -18,6 +18,7 @@ Updated proposal documents:
 
 - [Project proposal outline](docs/project_proposal_outline.md)
 - [Hebrew project proposal](docs/project_proposal_he.md)
+- [AI prompting and data flow documentation](docs/AI_PROMPTING_AND_DATA_FLOW.md)
 
 ## Current MVP Features
 
@@ -29,7 +30,7 @@ Updated proposal documents:
 - Study one section at a time while viewing rendered PDF pages and extracted text.
 - Download the current section as a smaller PDF.
 - Generate explanations and quizzes for each section.
-- Ask general study questions in the AI Tutor.
+- Ask grounded PDF questions that retrieve only the most relevant local chunks before calling AI.
 - Generate a final exam from the study material with safe fallback behavior when AI output is unavailable or malformed.
 - Track completed sections, quiz averages, study time, weak-topic recommendations, and final exam score.
 
@@ -43,6 +44,12 @@ The app supports English and Hebrew throughout the student workflow. Use the lan
 The selected language is stored in Streamlit session state as `st.session_state.language`. UI labels, navigation, status messages, dashboard text, study plans, tutor prompts, quiz generation, final exam generation, and fallback messages use the active language.
 
 Hebrew mode applies right-to-left layout and right-aligned text dynamically. New generated study plans, section quizzes, AI Tutor responses, and final exams are instructed to use the selected language.
+
+## Context-Aware PDF Retrieval
+
+After PDF extraction, the full extracted text is stored locally in Streamlit session state and local progress storage. The AI does not receive the whole PDF for every question. For PDF-grounded questions, the app searches the uploaded PDF locally with `ContextRetrievalService`, scores section/page chunks by word overlap, section title matches, and key concept matches, then sends only the top relevant chunks to the AI.
+
+If no relevant PDF chunks are found, the app returns: `The uploaded PDF does not contain enough information to answer this question.` This reduces hallucinations, API cost, privacy risk, and irrelevant context. "Explain This Section" intentionally keeps its previous behavior and sends only the current section title, page range, key concepts, and section text.
 
 ## Project Architecture
 
@@ -70,6 +77,7 @@ services/
   pdf_service.py        PDF text extraction
   pdf_render_service.py PDF page rendering
   pdf_section_service.py Section PDF extraction
+  context_retrieval_service.py Local PDF chunk retrieval for grounded AI prompts
   general_ai_service.py AI Tutor provider selection
   quiz_service.py       Deterministic section quiz generation
 
@@ -98,11 +106,11 @@ streamlit run ui/streamlit_app.py
 
 ## Optional AI Keys
 
-The AI Tutor and Final Exam generation choose providers in this order:
+AI study-plan sectioning, the AI Tutor, quiz generation, and Final Exam generation choose providers in this order:
 
 1. `OPENAI_API_KEY`
 2. `GROQ_API_KEY`
-3. Clear fallback/setup message when no key exists
+3. Deterministic offline fallback or clear setup message when no key exists
 
 Unit tests do not make real API calls.
 
