@@ -183,6 +183,93 @@ Fallback:
 - If a provider fails after chunks are retrieved, the app builds a local answer only from retrieved chunk sentences and appends retrieved source metadata.
 - The app no longer asks the model to use the current section "when helpful"; the prompt requires using only retrieved PDF context.
 
+### Smart Intent-Based Retrieval
+
+The app now classifies PDF questions before retrieval with `ContextRetrievalService.detect_query_intent(question)`. This prevents structural requests such as "what is the main idea of chapter 4?" from failing only because the query words do not overlap with PDF text chunks.
+
+Supported intents:
+
+| Intent | Retrieval behavior |
+| --- | --- |
+| `factual_question` | Uses strict local chunk retrieval with word overlap, title boosts, key-concept boosts, query expansion, and metadata scoring. If no relevant chunks are found, the app returns the not-enough-information message. |
+| `chapter_summary` | Uses `build_document_index()` and `retrieve_chapter_context()` to find real chapter headings such as `Chapter 4`, `CHAPTER 4`, `Ch. 4`, numbered headings, or number-word headings such as `Chapter Four`. |
+| `section_summary` | Uses the requested saved study section number directly and sends only that section's text and metadata. |
+| `study_plan` | Uses saved study section metadata: titles, summaries, key concepts, difficulty, estimated minutes, and page ranges. It does not use random chunks. |
+| `general_pdf_summary` | Uses representative PDF chunks across sections. |
+
+Chapter detection prefers headings near the beginning of a page and creates ordered, non-overlapping chapter ranges from each heading to the page before the next heading. If no real chapter headings are detected, the app maps `chapter N` to Study Section `N` and marks the source as `section_fallback`.
+
+Chapter summary prompt shape:
+
+```text
+You are a grounded PDF study assistant.
+The user is asking for the main idea or summary of one or more chapters.
+Answer ONLY using the provided PDF context.
+Do not use outside knowledge.
+If the provided context does not contain enough information, say:
+"The uploaded PDF does not contain enough information to answer this question."
+
+For each requested chapter:
+- Give the main idea in 2-4 sentences.
+- List 3-5 key points.
+- Add a short "What to focus on while studying" section.
+- Include the source chapter/page range.
+
+Provided PDF context:
+[Chapter 4 | Learning | Pages 120-165]
+...
+
+Question:
+{question}
+```
+
+Section summary prompt shape:
+
+```text
+You are a grounded PDF study assistant.
+The user is asking for the main idea or summary of a study section.
+Answer ONLY using the provided study section.
+Do not use outside knowledge.
+Give:
+- Main idea
+- Key points
+- What to focus on
+- Source section/page range
+
+Study section:
+[Study Section 4 | Learning | Pages 10-14]
+...
+
+Question:
+{question}
+```
+
+Study-plan prompt shape:
+
+```text
+You are a grounded PDF study assistant.
+Build a study plan ONLY from the saved study sections below.
+Do not use outside knowledge.
+Use the section titles, summaries, key concepts, difficulty, and estimated time.
+
+Saved study sections:
+Session 1: ...
+
+Question:
+{question}
+```
+
+Source display:
+
+```text
+Retrieved sources:
+- Chapter 4 - Pages 120-165
+- Study Section 4 - Pages 10-14
+  Note: Chapter heading was not detected, so the app used Study Section 4 as the closest match.
+```
+
+Fixed issue: before this retrieval layer, "What is the main idea of chapter 4?" could return the not-enough-information message even when chapter or section content existed. After this change, the app detects the chapter request, retrieves chapter 4 by heading or maps it to Study Section 4, and summarizes only that retrieved context.
+
 ### General AI Tutor
 
 | Item | Implementation |
@@ -198,8 +285,8 @@ Data sent:
 | Data type | Sent? | Details |
 | --- | --- | --- |
 | User input | Yes | The chat input question is sent. |
-| Extracted PDF text | Optional | If "Use uploaded PDF context" is checked, or the question explicitly refers to the PDF/document/material, `retrieve_ai_tutor_pdf_chunks()` first retrieves top relevant chunks locally. For broad requests such as summaries, main ideas, study plans, or practice questions, it falls back to representative chunks across sections. |
-| Section/session content | Optional | Grounded mode sends retrieved or representative section/page chunks with source metadata. General mode sends no PDF context. |
+| Extracted PDF text | Optional | If "Use uploaded PDF context" is checked, or the question explicitly refers to the PDF/document/material, the app first detects the query intent. Factual questions use local chunk retrieval; chapter/section summaries use structural retrieval; broad summaries use representative chunks. |
+| Section/session content | Optional | Grounded mode sends retrieved chunks, chapter ranges, section text, or saved section metadata depending on intent. General mode sends no PDF context. |
 | Metadata | Yes, if context enabled | Retrieved chunks include section number, section title, page, and text. |
 | Conversation history | General mode only | General tutor mode sends recent chat history through `GeneralAIService.ask()`. Grounded PDF mode does not send history. |
 | Full PDF text | No | The whole PDF is searched locally; the AI receives only selected chunks. Broad PDF-level questions receive representative chunks from multiple sections, not the full PDF. |

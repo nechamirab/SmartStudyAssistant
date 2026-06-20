@@ -51,6 +51,16 @@ After PDF extraction, the full extracted text is stored locally in Streamlit ses
 
 If no relevant PDF chunks are found, the app returns: `The uploaded PDF does not contain enough information to answer this question.` This reduces hallucinations, API cost, privacy risk, and irrelevant context. "Explain This Section" intentionally keeps its previous behavior and sends only the current section title, page range, key concepts, and section text.
 
+## Smart Intent-Based Retrieval
+
+AI Tutor and current-section questions now detect the user's intent before using normal chunk retrieval. Factual questions still use strict local chunk retrieval and return the not-enough-information message when the PDF does not support an answer.
+
+Chapter and section summary requests use document structure detection instead of relying only on word overlap. For example, "What is the main idea of chapter 4?" searches for real headings such as `Chapter 4`, `CHAPTER 4`, `Ch. 4`, `Chapter Four`, or numbered headings near the start of PDF pages. If real chapter headings are not detected, the app maps `chapter 4` to Study Section 4 as the closest local fallback and marks the source accordingly.
+
+Study-plan requests use the saved study sections, including titles, summaries, key concepts, difficulty, and estimated time, instead of random retrieved chunks. The assistant remains grounded: it answers only from extracted PDF text or saved section metadata and does not use outside knowledge.
+
+Fixed behavior: before this change, questions like "What is the main idea of chapter 4?" could return `The uploaded PDF does not contain enough information to answer this question.` even when Study Section 4 existed. Now the app detects the chapter request, retrieves chapter 4 or Study Section 4, summarizes it, and displays the source pages.
+
 ## SQLite Login And Saved Sessions
 
 The app now supports simple local accounts backed by SQLite. Users register or log in before using study features, and each user's uploaded documents and study sessions are kept separate in `.smartstudy.db`.
