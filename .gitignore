@@ -46,6 +46,7 @@ ocr_uploads/
 cache/
 temp/
 .smartstudy_progress.json
+.smartstudy.db
 *.csv
 results/*.csv
 results/*.json
