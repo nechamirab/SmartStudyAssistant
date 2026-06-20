@@ -220,6 +220,58 @@ def generate_explanation(section: StudySection) -> str:
         f"_Offline fallback explanation_\n\n{source_label(section)}"
     )
 
+def relevant_document_context(question: str, current_section: StudySection, max_chars: int = 12000) -> tuple[str, list[int]]:
+    stop_words = {
+        "what", "are", "the", "for", "and", "that", "this", "with", "from",
+        "does", "have", "into", "about", "which", "when", "where", "why",
+        "how", "is", "a", "an", "of", "to", "in", "on",
+    }
+
+    question_terms = {
+        token
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", question.lower())
+        if token not in stop_words
+    }
+
+    ranked_pages: list[tuple[int, int, str]] = []
+
+    for page in st.session_state.pages:
+        page_text = (getattr(page, "text", "") or "").strip()
+        if not page_text:
+            continue
+
+        page_number = int(getattr(page, "page_number", 0) or 0)
+        page_tokens = set(re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", page_text.lower()))
+        score = len(question_terms & page_tokens)
+
+        if current_section.start_page <= page_number <= current_section.end_page:
+            score += 1
+
+        if score > 0:
+            ranked_pages.append((score, page_number, page_text))
+
+    ranked_pages.sort(key=lambda item: (-item[0], item[1]))
+
+    parts: list[str] = []
+    source_pages: list[int] = []
+
+    for _, page_number, page_text in ranked_pages[:8]:
+        parts.append(f"[Page {page_number}]\n{page_text}")
+        source_pages.append(page_number)
+
+        if sum(len(part) for part in parts) >= max_chars:
+            break
+
+    if not parts:
+        return "", ""
+
+    return "\n\n".join(parts)[:max_chars], source_pages
+
+def question_language(question: str, default_language: str) -> str:
+    if re.search(r"[\u0590-\u05FF]", question or ""):
+        return "he"
+
+    return default_language
 
 def answer_section_question(section: StudySection, question: str) -> str:
     intent = ContextRetrievalService.detect_query_intent(question)
