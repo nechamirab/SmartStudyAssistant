@@ -9,7 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.models import DocumentPage
+from services.auth_service import AuthService
 from services.context_retrieval_service import ContextRetrievalService
+from services.database_service import DatabaseService
 from services.exam_grading_service import ExamGradingService
 from services.exam_service import ExamOptions, ExamService
 from services.persistence_service import PersistenceService
@@ -421,6 +423,159 @@ class TestMVPServices(unittest.TestCase):
             answer = workflow.answer_section_question(sections[0], "What is photosynthesis?")
 
         self.assertEqual(answer, workflow.NOT_ENOUGH_INFORMATION)
+
+    def test_user_registration_creates_user(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseService(Path(tmpdir) / "test.db")
+            auth = AuthService(database=db, session_state={})
+
+            result = auth.register_user("student", "secret123")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["user"]["username"], "student")
+        self.assertNotIn("password", result["user"])
+
+    def test_duplicate_username_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseService(Path(tmpdir) / "test.db")
+            auth = AuthService(database=db, session_state={})
+            self.assertTrue(auth.register_user("student", "secret123")["ok"])
+
+            result = auth.register_user("student", "another123")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("exists", result["error"])
+
+    def test_login_works_with_correct_password(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseService(Path(tmpdir) / "test.db")
+            session_state: dict[str, object] = {}
+            auth = AuthService(database=db, session_state=session_state)
+            auth.register_user("student", "secret123")
+            auth.logout_user()
+
+            result = auth.login_user("student", "secret123")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["user"]["username"], "student")
+
+    def test_login_fails_with_wrong_password(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseService(Path(tmpdir) / "test.db")
+            auth = AuthService(database=db, session_state={})
+            auth.register_user("student", "secret123")
+
+            result = auth.login_user("student", "badpass")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Invalid", result["error"])
+
+    def test_saved_study_session_can_be_created_and_loaded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseService(Path(tmpdir) / "test.db")
+            auth = AuthService(database=db, session_state={})
+            user = auth.register_user("student", "secret123")["user"]
+            pages = [DocumentPage(1, "BFS uses a queue to visit nodes level by level.")]
+            sections = [
+                StudySection(1, "Section 1: BFS", 1, 1, 20, "Easy", "Graph traversal.", ["Trace BFS."], ["BFS"])
+            ]
+
+            _document_id, session_id = db.create_session_from_state(
+                user_id=user["id"],
+                filename="notes.pdf",
+                title="Algorithms",
+                language="en",
+                pages=pages,
+                sections=sections,
+            )
+            loaded = db.load_study_session(user["id"], session_id)
+
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded["session"]["filename"], "notes.pdf")
+        self.assertEqual(loaded["sections"][0].title, "Section 1: BFS")
+        self.assertIn("BFS uses a queue", loaded["pages"][0].text)
+
+    def test_progress_update_persists(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseService(Path(tmpdir) / "test.db")
+            auth = AuthService(database=db, session_state={})
+            user = auth.register_user("student", "secret123")["user"]
+            pages = [DocumentPage(1, "BFS uses a queue to visit nodes level by level.")]
+            sections = [
+                StudySection(1, "Section 1: BFS", 1, 1, 20, "Easy", "Graph traversal.", ["Trace BFS."], ["BFS"])
+            ]
+            _document_id, session_id = db.create_session_from_state(
+                user_id=user["id"],
+                filename="notes.pdf",
+                title="Algorithms",
+                language="en",
+                pages=pages,
+                sections=sections,
+            )
+            progress = ProgressService.default_state()
+            progress.completed_sections.add(1)
+            states = SectionStateService.ensure_states({}, [1])
+            states["1"]["explanation"] = "BFS explanation"
+
+            db.save_runtime_state(
+                user_id=user["id"],
+                session_id=session_id,
+                sections=sections,
+                progress=progress,
+                section_states=states,
+                final_exam=None,
+                final_exam_answers={},
+                final_exam_result=None,
+            )
+            loaded = db.load_study_session(user["id"], session_id)
+
+        self.assertIn(1, loaded["progress"].completed_sections)
+        self.assertEqual(loaded["section_states"]["1"]["explanation"], "BFS explanation")
+
+    def test_quiz_attempt_save_load_works(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseService(Path(tmpdir) / "test.db")
+            auth = AuthService(database=db, session_state={})
+            user = auth.register_user("student", "secret123")["user"]
+            document_id = db.create_document(user["id"], "notes.pdf")
+            session_id = db.create_study_session(user["id"], document_id, "Algorithms", "en")
+
+            db.save_quiz_attempt(
+                user["id"],
+                session_id,
+                1,
+                [{"type": "multiple_choice", "question": "Q?", "answer": "A"}],
+                {"1": "A"},
+                100,
+                ["Correct."],
+            )
+            attempts = db.load_quiz_attempts(user["id"], session_id)
+
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["score"], 100)
+        self.assertEqual(attempts[0]["answers"], {"1": "A"})
+
+    def test_exam_attempt_save_load_works(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseService(Path(tmpdir) / "test.db")
+            auth = AuthService(database=db, session_state={})
+            user = auth.register_user("student", "secret123")["user"]
+            document_id = db.create_document(user["id"], "notes.pdf")
+            session_id = db.create_study_session(user["id"], document_id, "Algorithms", "en")
+
+            db.save_exam_attempt(
+                user["id"],
+                session_id,
+                {"questions": [{"id": 1, "question": "Explain BFS"}]},
+                {"1": "It uses a queue"},
+                90,
+                ["BFS"],
+            )
+            attempts = db.load_exam_attempts(user["id"], session_id)
+
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["score"], 90)
+        self.assertEqual(attempts[0]["weak_topics"], ["BFS"])
 
 
 if __name__ == "__main__":

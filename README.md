@@ -51,6 +51,20 @@ After PDF extraction, the full extracted text is stored locally in Streamlit ses
 
 If no relevant PDF chunks are found, the app returns: `The uploaded PDF does not contain enough information to answer this question.` This reduces hallucinations, API cost, privacy risk, and irrelevant context. "Explain This Section" intentionally keeps its previous behavior and sends only the current section title, page range, key concepts, and section text.
 
+## SQLite Login And Saved Sessions
+
+The app now supports simple local accounts backed by SQLite. Users register or log in before using study features, and each user's uploaded documents and study sessions are kept separate in `.smartstudy.db`.
+
+Saved data includes generated study sections, extracted section text, section completion, explanation text, quiz attempts, quiz scores, final exam attempts, final exam answers, and weak-topic results. Passwords are hashed before storage; plain-text passwords are never written to the database.
+
+SQLite is local and lightweight, which fits the academic/demo scope of this project. The existing JSON persistence remains as a fallback/legacy path, while logged-in users use SQLite as the preferred persistence layer.
+
+## Improved Study Sectioning And Time Estimation
+
+Study sections are validated for page coverage, ordering, non-overlapping page ranges, useful titles, summaries, key concepts, and learning objectives. If AI sectioning fails validation, the app falls back to deterministic heuristic sectioning.
+
+Estimated study time is calculated from section word count, difficulty, key concept count, and practice/review time. This makes estimates consistent and explainable instead of relying blindly on AI-provided values.
+
 ## Project Architecture
 
 ```text
@@ -78,6 +92,8 @@ services/
   pdf_render_service.py PDF page rendering
   pdf_section_service.py Section PDF extraction
   context_retrieval_service.py Local PDF chunk retrieval for grounded AI prompts
+  database_service.py   SQLite users, sessions, progress, quizzes, and exams
+  auth_service.py       Login, registration, logout, and password hashing
   general_ai_service.py AI Tutor provider selection
   quiz_service.py       Deterministic section quiz generation
 
