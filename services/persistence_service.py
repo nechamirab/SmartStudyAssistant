@@ -32,7 +32,7 @@ class PersistenceService:
     def save(cls, payload: dict[str, Any], path: str | Path | None = None) -> None:
         file_path = Path(path or cls.DEFAULT_PATH)
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        file_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     @staticmethod
     def build_payload(

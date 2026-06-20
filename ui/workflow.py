@@ -274,15 +274,11 @@ def question_language(question: str, default_language: str) -> str:
     return default_language
 
 def answer_section_question(section: StudySection, question: str) -> str:
-    intent = ContextRetrievalService.detect_query_intent(question)
-    if intent["intent"] == "chapter_summary":
-        return answer_chapter_summary_result(question, intent)["answer"]
-    if intent["intent"] == "section_summary":
-        return answer_study_section_summary_result(question, intent)["answer"]
-    if intent["intent"] == "study_plan":
-        return answer_study_plan_result(question)["answer"]
+    chunks = retrieve_current_section_chunks(question, section)
 
-    chunks = retrieve_pdf_chunks(question)
+    if not chunks:
+        chunks = retrieve_pdf_chunks(question)
+
     if not chunks:
         return NOT_ENOUGH_INFORMATION
 
@@ -292,12 +288,28 @@ def answer_section_question(section: StudySection, question: str) -> str:
 def retrieve_pdf_chunks(question: str, top_k: int = 5) -> list[dict[str, Any]]:
     if not has_pdf():
         return []
+
     chunks = ContextRetrievalService.build_chunks_from_pages(
         st.session_state.pages,
         st.session_state.sections,
     )
-    return ContextRetrievalService.retrieve_relevant_chunks(question, chunks, top_k=top_k, min_score=1)
 
+    retrieved = ContextRetrievalService.retrieve_relevant_chunks(
+        question,
+        chunks,
+        top_k=top_k,
+        min_score=1,
+    )
+
+    if retrieved:
+        return retrieved
+
+    return ContextRetrievalService.retrieve_relevant_chunks(
+        question,
+        chunks,
+        top_k=top_k,
+        min_score=0,
+    )
 
 def retrieve_ai_tutor_pdf_chunks(question: str, top_k: int = 8) -> list[dict[str, Any]]:
     if not has_pdf():
@@ -307,7 +319,14 @@ def retrieve_ai_tutor_pdf_chunks(question: str, top_k: int = 8) -> list[dict[str
         st.session_state.pages,
         st.session_state.sections,
     )
-    retrieved = ContextRetrievalService.retrieve_relevant_chunks(question, chunks, top_k=top_k, min_score=1)
+
+    retrieved = ContextRetrievalService.retrieve_relevant_chunks(
+        question,
+        chunks,
+        top_k=top_k,
+        min_score=1,
+    )
+
     if retrieved:
         return retrieved
 
@@ -315,6 +334,64 @@ def retrieve_ai_tutor_pdf_chunks(question: str, top_k: int = 8) -> list[dict[str
         return ContextRetrievalService.retrieve_overview_chunks(chunks, top_k=top_k)
 
     return []
+
+def retrieve_current_section_chunks(
+    question: str,
+    section: StudySection,
+    top_k: int = 5,
+) -> list[dict[str, Any]]:
+    if not has_pdf():
+        return []
+
+    section_chunks: list[dict[str, Any]] = []
+
+    for page in st.session_state.pages:
+        page_number = int(getattr(page, "page_number", 0) or 0)
+        if not section.start_page <= page_number <= section.end_page:
+            continue
+
+        page_text = (getattr(page, "text", "") or "").strip()
+        if not page_text:
+            continue
+
+        for text_part in ContextRetrievalService._split_text(page_text):
+            section_chunks.append(
+                {
+                    "text": text_part,
+                    "section_number": section.section_number,
+                    "section_title": section.title,
+                    "start_page": page_number,
+                    "end_page": page_number,
+                    "page": page_number,
+                    "key_concepts": section.key_concepts,
+                }
+            )
+
+    retrieved = ContextRetrievalService.retrieve_relevant_chunks(
+        question,
+        section_chunks,
+        top_k=top_k,
+        min_score=1,
+    )
+
+    if len(retrieved) >= 3:
+        return retrieved
+
+    fallback_chunks = []
+    seen_pages = {int(chunk.get("page", 0) or 0) for chunk in retrieved}
+
+    for chunk in section_chunks:
+        page = int(chunk.get("page", 0) or 0)
+        if page in seen_pages:
+            continue
+
+        fallback_chunks.append(chunk)
+        seen_pages.add(page)
+
+        if len(retrieved) + len(fallback_chunks) >= top_k:
+            break
+
+    return retrieved + fallback_chunks
 
 
 def is_document_overview_question(question: str) -> bool:
