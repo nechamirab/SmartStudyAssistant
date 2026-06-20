@@ -40,6 +40,7 @@ def init_state() -> None:
         "current_db_document_id": None,
         "current_db_session_id": None,
         "db_status_message": "",
+        "active_auth_user_id": None,
         "weak_topic_review": "",
         "current_page": DEFAULT_CURRENT_PAGE,
         "language": DEFAULT_LANGUAGE,
@@ -50,6 +51,7 @@ def init_state() -> None:
         if key not in st.session_state:
             st.session_state[key] = value
 
+    enforce_authenticated_user_isolation()
     restore_saved_state()
     st.session_state.progress = ProgressService.load(st.session_state.progress)
     st.session_state.current_page = normalize_current_page(st.session_state.get("current_page"))
@@ -66,6 +68,11 @@ def restore_saved_state() -> None:
     if st.session_state.persistence_loaded:
         return
     st.session_state.persistence_loaded = True
+    if st.session_state.get("auth_user"):
+        # Logged-in users should resume through SQLite saved sessions only.
+        # Loading the legacy JSON cache here would leak one user's active PDF
+        # into another user's browser session.
+        return
     if st.session_state.sections or st.session_state.pages:
         return
 
@@ -82,6 +89,50 @@ def restore_saved_state() -> None:
     st.session_state.final_exam = payload.get("final_exam")
     st.session_state.final_exam_answers = dict(payload.get("final_exam_answers", {}) or {})
     st.session_state.final_exam_result = payload.get("final_exam_result")
+
+
+def enforce_authenticated_user_isolation() -> None:
+    auth_user = st.session_state.get("auth_user")
+    current_user_id = None
+    if isinstance(auth_user, dict) and auth_user.get("id"):
+        current_user_id = int(auth_user["id"])
+
+    if st.session_state.get("active_auth_user_id") == current_user_id:
+        return
+
+    reset_active_study_state()
+    st.session_state.active_auth_user_id = current_user_id
+    st.session_state.persistence_loaded = False
+
+
+def reset_active_study_state() -> None:
+    st.session_state.pdf_bytes = b""
+    st.session_state.pdf_name = ""
+    st.session_state.pages = []
+    st.session_state.pending_pages = []
+    st.session_state.pending_sections = []
+    st.session_state.pending_plan_signature = ""
+    st.session_state.pending_pdf_bytes = b""
+    st.session_state.pending_pdf_name = ""
+    st.session_state.uploaded_folder_files = []
+    st.session_state.selected_folder_pdf = ""
+    st.session_state.processed_upload_signature = ""
+    st.session_state.suggested_session_count = 0
+    st.session_state.selected_session_count = 0
+    st.session_state.sections = []
+    st.session_state.current_section_index = 0
+    st.session_state.upload_message = ""
+    st.session_state.section_states = {}
+    st.session_state.ai_tutor_history = []
+    st.session_state.final_exam = None
+    st.session_state.final_exam_answers = {}
+    st.session_state.final_exam_result = None
+    st.session_state.current_db_document_id = None
+    st.session_state.current_db_session_id = None
+    st.session_state.db_status_message = ""
+    st.session_state.weak_topic_review = ""
+    st.session_state.progress = ProgressService.default_state()
+    st.session_state.current_page = DEFAULT_CURRENT_PAGE
 
 
 def normalize_study_section(section: Any) -> StudySection:

@@ -28,6 +28,14 @@ def import_workflow_with_fake_streamlit():
     return workflow
 
 
+def import_state_with_fake_streamlit(session_state):
+    fake_streamlit = types.SimpleNamespace(session_state=session_state)
+    with patch.dict(sys.modules, {"streamlit": fake_streamlit}):
+        import ui.state as state
+    state.st = fake_streamlit
+    return state
+
+
 class FakeSessionState(dict):
     def __getattr__(self, key):
         try:
@@ -576,6 +584,59 @@ class TestMVPServices(unittest.TestCase):
         self.assertEqual(len(attempts), 1)
         self.assertEqual(attempts[0]["score"], 90)
         self.assertEqual(attempts[0]["weak_topics"], ["BFS"])
+
+    def test_logged_in_user_does_not_restore_legacy_json_pdf(self):
+        state_module = import_state_with_fake_streamlit(
+            FakeSessionState({"auth_user": {"id": 1, "username": "first"}})
+        )
+        legacy_payload = {
+            "pdf": {"name": "legacy.pdf", "page_count": 1},
+            "pages": [{"page_number": 1, "text": "Legacy PDF text."}],
+            "sections": [
+                {
+                    "section_number": 1,
+                    "title": "Legacy Section",
+                    "start_page": 1,
+                    "end_page": 1,
+                    "estimated_minutes": 20,
+                    "difficulty": "Easy",
+                    "summary": "Legacy summary.",
+                    "learning_objectives": ["Review legacy."],
+                    "key_concepts": ["Legacy"],
+                }
+            ],
+        }
+
+        with patch.object(state_module.PersistenceService, "load", return_value=legacy_payload):
+            state_module.init_state()
+
+        self.assertEqual(state_module.st.session_state.pdf_name, "")
+        self.assertEqual(state_module.st.session_state.pages, [])
+        self.assertEqual(state_module.st.session_state.sections, [])
+
+    def test_switching_users_clears_active_pdf_state(self):
+        session_state = FakeSessionState(
+            {
+                "auth_user": {"id": 2, "username": "second"},
+                "active_auth_user_id": 1,
+                "pdf_name": "first-user.pdf",
+                "pages": [DocumentPage(1, "First user data")],
+                "sections": [
+                    StudySection(1, "First Section", 1, 1, 20, "Easy", "Summary", [], ["First"])
+                ],
+                "current_db_session_id": 10,
+                "persistence_loaded": True,
+            }
+        )
+        state_module = import_state_with_fake_streamlit(session_state)
+
+        with patch.object(state_module.PersistenceService, "load", return_value={}):
+            state_module.init_state()
+
+        self.assertEqual(state_module.st.session_state.active_auth_user_id, 2)
+        self.assertEqual(state_module.st.session_state.pdf_name, "")
+        self.assertEqual(state_module.st.session_state.pages, [])
+        self.assertEqual(state_module.st.session_state.current_db_session_id, None)
 
 
 if __name__ == "__main__":
