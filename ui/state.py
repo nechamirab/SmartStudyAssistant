@@ -46,6 +46,7 @@ def init_state() -> None:
         "language": DEFAULT_LANGUAGE,
         "progress": ProgressService.default_state(),
         "persistence_loaded": False,
+        "sqlite_autoload_user_id": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -53,6 +54,7 @@ def init_state() -> None:
 
     enforce_authenticated_user_isolation()
     restore_saved_state()
+    restore_latest_sqlite_session()
     st.session_state.progress = ProgressService.load(st.session_state.progress)
     st.session_state.current_page = normalize_current_page(st.session_state.get("current_page"))
     st.session_state.language = normalize_language(st.session_state.get("language"))
@@ -133,6 +135,51 @@ def reset_active_study_state() -> None:
     st.session_state.weak_topic_review = ""
     st.session_state.progress = ProgressService.default_state()
     st.session_state.current_page = DEFAULT_CURRENT_PAGE
+    st.session_state.sqlite_autoload_user_id = None
+
+
+def restore_latest_sqlite_session() -> None:
+    auth_user = st.session_state.get("auth_user")
+    if not isinstance(auth_user, dict) or not auth_user.get("id"):
+        return
+    user_id = int(auth_user["id"])
+    if st.session_state.get("sqlite_autoload_user_id") == user_id:
+        return
+    st.session_state.sqlite_autoload_user_id = user_id
+    if st.session_state.pages or st.session_state.sections or st.session_state.current_db_session_id:
+        return
+
+    try:
+        from services.database_service import DatabaseService
+
+        database = DatabaseService()
+        sessions = database.list_study_sessions(user_id)
+        if not sessions:
+            return
+        payload = database.load_study_session(user_id, int(sessions[0]["id"]))
+        if not payload:
+            return
+        apply_sqlite_session_payload(payload, status_message="Latest saved session restored.")
+    except Exception as exc:
+        st.session_state.db_status_message = f"SQLite session restore failed: {exc}"
+
+
+def apply_sqlite_session_payload(payload: dict[str, Any], status_message: str = "Saved session loaded.") -> None:
+    session = payload["session"]
+    st.session_state.pdf_bytes = payload.get("pdf_bytes") or b""
+    st.session_state.pdf_name = session.get("filename", "")
+    st.session_state.pages = payload["pages"]
+    st.session_state.sections = payload["sections"]
+    st.session_state.section_states = payload["section_states"]
+    st.session_state.progress = payload["progress"]
+    st.session_state.final_exam = payload["final_exam"]
+    st.session_state.final_exam_answers = payload["final_exam_answers"]
+    st.session_state.final_exam_result = payload["final_exam_result"]
+    st.session_state.current_section_index = int(session.get("current_section_index", 0) or 0)
+    st.session_state.current_db_document_id = int(session["document_id"])
+    st.session_state.current_db_session_id = int(session["id"])
+    st.session_state.upload_message = f"Loaded saved session for {st.session_state.pdf_name}."
+    st.session_state.db_status_message = status_message
 
 
 def normalize_study_section(section: Any) -> StudySection:
@@ -269,6 +316,7 @@ def persist_sqlite_state() -> None:
             final_exam_answers=st.session_state.final_exam_answers,
             final_exam_result=st.session_state.final_exam_result,
             pdf_bytes=st.session_state.get("pdf_bytes", b""),
+            current_section_index=st.session_state.current_section_index,
         )
     except Exception as exc:
         st.session_state.db_status_message = f"SQLite save failed: {exc}"

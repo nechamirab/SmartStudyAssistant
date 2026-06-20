@@ -55,6 +55,8 @@ class DatabaseService:
                     document_id INTEGER NOT NULL,
                     title TEXT NOT NULL,
                     language TEXT NOT NULL DEFAULT 'en',
+                    current_section_index INTEGER NOT NULL DEFAULT 0,
+                    progress_state TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -121,6 +123,8 @@ class DatabaseService:
                 """
             )
             self._ensure_column(conn, "documents", "pdf_bytes", "BLOB")
+            self._ensure_column(conn, "study_sessions", "current_section_index", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "study_sessions", "progress_state", "TEXT NOT NULL DEFAULT '{}'")
 
     def create_user(self, username: str, password_hash: str) -> dict[str, Any]:
         with self.connect() as conn:
@@ -261,6 +265,11 @@ class DatabaseService:
                 for row in section_rows
             ]
             progress, section_states = self._load_progress_and_states(conn, user_id, session_id, sections)
+            runtime_progress = ProgressService.load(session["progress_state"])
+            runtime_progress.completed_sections.update(progress.completed_sections)
+            runtime_progress.section_quiz_scores.update(progress.section_quiz_scores)
+            runtime_progress.quiz_scores = progress.quiz_scores or runtime_progress.quiz_scores
+            progress = runtime_progress
             exam = self._load_latest_exam(conn, user_id, session_id)
 
             return {
@@ -287,11 +296,27 @@ class DatabaseService:
         final_exam_answers: dict[str, Any],
         final_exam_result: dict[str, Any] | None,
         pdf_bytes: bytes | None = None,
+        current_section_index: int = 0,
     ) -> None:
         with self.connect() as conn:
             if pdf_bytes:
                 self._save_session_pdf_bytes(conn, user_id, session_id, pdf_bytes)
             loaded_progress = ProgressService.load(progress)
+            conn.execute(
+                """
+                UPDATE study_sessions
+                SET current_section_index = ?,
+                    progress_state = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+                """,
+                (
+                    max(0, int(current_section_index or 0)),
+                    self._json(ProgressService.dump(loaded_progress)),
+                    session_id,
+                    user_id,
+                ),
+            )
             for section in sections:
                 state = SectionStateService.get_state(section_states, section.section_number)
                 quiz_score = state.get("quiz_score")

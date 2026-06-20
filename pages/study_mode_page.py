@@ -28,13 +28,17 @@ from ui.workflow import answer_section_question, build_section_quiz, generate_ex
 from services.ai_answer_grading_service import AIAnswerGradingService
 
 
+PDF_PREVIEW_SCROLL_HEIGHT = 720
+
+
 def render_pdf_pages(section) -> None:
     st.markdown(f"### {t('pdf_section')}")
     st.markdown(f"**{t('now_studying', page_label=page_label(section))}**")
     images = PdfRenderService.render_pages(st.session_state.pdf_bytes, section.start_page, section.end_page)
     if images:
-        for offset, image in enumerate(images, start=section.start_page):
-            st.image(image, caption=source_label(section, offset), use_container_width=True)
+        with st.container(height=PDF_PREVIEW_SCROLL_HEIGHT, border=True):
+            for offset, image in enumerate(images, start=section.start_page):
+                st.image(image, caption=source_label(section, offset), width="stretch")
     else:
         st.info(t("page_images_unavailable"))
 

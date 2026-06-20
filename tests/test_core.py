@@ -353,6 +353,91 @@ class TestMVPServices(unittest.TestCase):
         self.assertIn("[Section 4 | Shortest Paths | Page 11]", formatted)
         self.assertIn("Dijkstra computes shortest paths", formatted)
 
+    def test_detect_query_intent_chapter_summary_digit(self):
+        intent = ContextRetrievalService.detect_query_intent("what is the main idea of chapter 4?")
+
+        self.assertEqual(intent["intent"], "chapter_summary")
+        self.assertEqual(intent["chapter_numbers"], [4])
+        self.assertTrue(intent["wants_main_idea"])
+
+    def test_detect_query_intent_multiple_chapters(self):
+        intent = ContextRetrievalService.detect_query_intent("give me the main idea for chapter 4 and 5")
+
+        self.assertEqual(intent["intent"], "chapter_summary")
+        self.assertEqual(intent["chapter_numbers"], [4, 5])
+
+    def test_detect_query_intent_number_words(self):
+        intent = ContextRetrievalService.detect_query_intent("summarize chapter four")
+
+        self.assertEqual(intent["intent"], "chapter_summary")
+        self.assertEqual(intent["chapter_numbers"], [4])
+
+    def test_build_document_index_detects_chapter_heading(self):
+        pages = [
+            DocumentPage(10, "Preface and learning goals."),
+            DocumentPage(11, "Chapter 4 Learning\nLearning changes behavior through experience."),
+            DocumentPage(12, "Reinforcement and practice examples."),
+        ]
+
+        index = ContextRetrievalService.build_document_index(pages, [])
+
+        chapter = next(item for item in index["chapters"] if item["chapter_number"] == 4)
+        self.assertEqual(chapter["start_page"], 11)
+        self.assertEqual(chapter["matched_by"], "heading")
+        self.assertIn("Learning", chapter["title"])
+
+    def test_retrieve_chapter_context_uses_heading_range(self):
+        pages = [
+            DocumentPage(1, "Chapter 4 Learning\nLearning changes behavior through experience."),
+            DocumentPage(2, "Classical conditioning pairs stimuli."),
+            DocumentPage(3, "Chapter 5 Memory\nMemory stores and retrieves information."),
+            DocumentPage(4, "Encoding and retrieval cues support remembering."),
+        ]
+
+        context, sources = ContextRetrievalService.retrieve_chapter_context([4], pages, [], max_chars=5000)
+
+        self.assertIn("[Chapter 4", context)
+        self.assertIn("Classical conditioning", context)
+        self.assertNotIn("Memory stores", context)
+        self.assertEqual(sources[0]["type"], "chapter")
+        self.assertEqual(sources[0]["start_page"], 1)
+        self.assertEqual(sources[0]["end_page"], 2)
+
+    def test_retrieve_chapter_context_falls_back_to_study_section(self):
+        pages = [
+            DocumentPage(10, "Learning changes behavior through experience."),
+            DocumentPage(11, "Reinforcement strengthens behavior."),
+        ]
+        sections = [
+            StudySection(4, "Learning", 10, 11, 20, "Medium", "Learning principles.", ["Review conditioning."], ["Learning"])
+        ]
+
+        context, sources = ContextRetrievalService.retrieve_chapter_context([4], pages, sections, max_chars=5000)
+
+        self.assertIn("[Chapter 4", context)
+        self.assertIn("Reinforcement strengthens behavior", context)
+        self.assertEqual(sources[0]["type"], "study_section")
+        self.assertEqual(sources[0]["matched_by"], "section_fallback")
+
+    def test_retrieve_relevant_chunks_adds_match_reason(self):
+        chunks = [
+            {
+                "section_number": 4,
+                "section_title": "Learning",
+                "start_page": 10,
+                "end_page": 12,
+                "page": 10,
+                "text": "Conditioning is a learning process.",
+                "key_concepts": ["Learning"],
+            }
+        ]
+
+        results = ContextRetrievalService.retrieve_relevant_chunks("main idea of section 4", chunks)
+
+        self.assertEqual(results[0]["section_number"], 4)
+        self.assertGreaterEqual(results[0]["score"], 10)
+        self.assertIn("match_reason", results[0])
+
     def test_retrieve_exam_context_covers_all_sections(self):
         sections = [
             StudySection(1, "Section 1: BFS", 1, 1, 10, "Easy", "Graph traversal.", ["Trace BFS."], ["BFS"]),
@@ -432,6 +517,77 @@ class TestMVPServices(unittest.TestCase):
             answer = workflow.answer_section_question(sections[0], "What is photosynthesis?")
 
         self.assertEqual(answer, workflow.NOT_ENOUGH_INFORMATION)
+
+    def test_chapter_summary_does_not_return_not_found_when_section_exists(self):
+        workflow = import_workflow_with_fake_streamlit()
+
+        sections = [
+            StudySection(1, "Section 1: Intro", 1, 1, 10, "Easy", "Intro.", [], ["Intro"]),
+            StudySection(4, "Section 4: Learning", 4, 5, 20, "Medium", "Learning principles.", [], ["Learning"]),
+        ]
+        pages = [
+            DocumentPage(1, "Introductory material."),
+            DocumentPage(4, "Learning changes behavior through experience."),
+            DocumentPage(5, "Reinforcement and conditioning are central learning ideas."),
+        ]
+
+        class FakeSt:
+            session_state = FakeSessionState({
+                "pages": pages,
+                "sections": sections,
+                "language": "en",
+            })
+
+        with patch.object(workflow, "st", FakeSt), patch.object(workflow, "has_pdf", return_value=True):
+            with patch.object(workflow, "GeneralAIService") as ai_service:
+                ai_service.return_value.complete.return_value = {
+                    "ok": True,
+                    "answer": "Chapter 4 focuses on learning principles.",
+                    "provider": "openai",
+                }
+                answer = workflow.answer_section_question(sections[0], "what is the main idea of chapter 4?")
+
+        prompt = ai_service.return_value.complete.call_args.args[1]
+        self.assertIn("Learning changes behavior", prompt)
+        self.assertIn("Study Section 4", answer)
+        self.assertNotEqual(answer, workflow.NOT_ENOUGH_INFORMATION)
+
+    def test_study_plan_intent_uses_sections_summary(self):
+        workflow = import_workflow_with_fake_streamlit()
+
+        sections = [
+            StudySection(1, "Learning", 1, 2, 30, "Medium", "Learning principles.", ["Explain conditioning."], ["Learning"]),
+            StudySection(2, "Memory", 3, 4, 25, "Hard", "Memory systems.", ["Compare memory types."], ["Memory"]),
+        ]
+        pages = [
+            DocumentPage(1, "Unrelated page body that should not drive the study plan."),
+            DocumentPage(3, "Another page body."),
+        ]
+
+        class FakeSt:
+            session_state = FakeSessionState({
+                "pages": pages,
+                "sections": sections,
+                "language": "en",
+                "ai_tutor_history": [],
+            })
+
+        with patch.object(workflow, "st", FakeSt), patch.object(workflow, "has_pdf", return_value=True):
+            with patch.object(workflow, "GeneralAIService") as ai_service:
+                ai_service.return_value.complete.return_value = {
+                    "ok": True,
+                    "answer": "Study Learning, then Memory.",
+                    "provider": "openai",
+                }
+                result = workflow.answer_ai_tutor("Help me build a study plan", use_pdf_context=True)
+
+        prompt = ai_service.return_value.complete.call_args.args[1]
+        self.assertEqual(result["provider"], "openai")
+        self.assertEqual(result["context"], "pdf")
+        self.assertIn("Session 1: Learning", prompt)
+        self.assertIn("Estimated time: 30 minutes", prompt)
+        self.assertIn("Session 2: Memory", prompt)
+        self.assertNotIn("Unrelated page body", prompt)
 
     def test_ai_tutor_pdf_overview_uses_representative_context(self):
         workflow = import_workflow_with_fake_streamlit()
@@ -650,6 +806,7 @@ class TestMVPServices(unittest.TestCase):
             )
             progress = ProgressService.default_state()
             progress.completed_sections.add(1)
+            progress.actual_study_seconds = 420
             states = SectionStateService.ensure_states({}, [1])
             states["1"]["explanation"] = "BFS explanation"
 
@@ -662,10 +819,13 @@ class TestMVPServices(unittest.TestCase):
                 final_exam=None,
                 final_exam_answers={},
                 final_exam_result=None,
+                current_section_index=2,
             )
             loaded = db.load_study_session(user["id"], session_id)
 
         self.assertIn(1, loaded["progress"].completed_sections)
+        self.assertEqual(loaded["progress"].actual_study_seconds, 420)
+        self.assertEqual(loaded["session"]["current_section_index"], 2)
         self.assertEqual(loaded["section_states"]["1"]["explanation"], "BFS explanation")
 
     def test_quiz_attempt_save_load_works(self):
@@ -736,7 +896,8 @@ class TestMVPServices(unittest.TestCase):
         }
 
         with patch.object(state_module.PersistenceService, "load", return_value=legacy_payload):
-            state_module.init_state()
+            with patch.object(state_module, "restore_latest_sqlite_session"):
+                state_module.init_state()
 
         self.assertEqual(state_module.st.session_state.pdf_name, "")
         self.assertEqual(state_module.st.session_state.pages, [])
@@ -759,12 +920,62 @@ class TestMVPServices(unittest.TestCase):
         state_module = import_state_with_fake_streamlit(session_state)
 
         with patch.object(state_module.PersistenceService, "load", return_value={}):
-            state_module.init_state()
+            with patch.object(state_module, "restore_latest_sqlite_session"):
+                state_module.init_state()
 
         self.assertEqual(state_module.st.session_state.active_auth_user_id, 2)
         self.assertEqual(state_module.st.session_state.pdf_name, "")
         self.assertEqual(state_module.st.session_state.pages, [])
         self.assertEqual(state_module.st.session_state.current_db_session_id, None)
+
+    def test_logged_in_user_autoloads_latest_sqlite_session(self):
+        session_state = FakeSessionState(
+            {
+                "auth_user": {"id": 1, "username": "student"},
+                "active_auth_user_id": 1,
+                "pdf_name": "",
+                "pages": [],
+                "sections": [],
+                "current_db_session_id": None,
+                "persistence_loaded": True,
+                "sqlite_autoload_user_id": None,
+                "progress": ProgressService.default_state(),
+            }
+        )
+        state_module = import_state_with_fake_streamlit(session_state)
+        progress = ProgressService.default_state()
+        progress.actual_study_seconds = 300
+        payload = {
+            "session": {
+                "id": 7,
+                "document_id": 9,
+                "filename": "notes.pdf",
+                "current_section_index": 1,
+            },
+            "pdf_bytes": b"%PDF",
+            "pages": [DocumentPage(1, "Saved text")],
+            "sections": [StudySection(1, "Saved Section", 1, 1, 20, "Easy", "Saved summary.", [], ["Saved"])],
+            "section_states": {"1": SectionStateService.default_state()},
+            "progress": progress,
+            "final_exam": None,
+            "final_exam_answers": {},
+            "final_exam_result": None,
+        }
+
+        class FakeDatabase:
+            def list_study_sessions(self, user_id):
+                return [{"id": 7}]
+
+            def load_study_session(self, user_id, session_id):
+                return payload
+
+        with patch("services.database_service.DatabaseService", return_value=FakeDatabase()):
+            state_module.restore_latest_sqlite_session()
+
+        self.assertEqual(state_module.st.session_state.pdf_name, "notes.pdf")
+        self.assertEqual(state_module.st.session_state.current_db_session_id, 7)
+        self.assertEqual(state_module.st.session_state.current_section_index, 1)
+        self.assertEqual(state_module.st.session_state.progress.actual_study_seconds, 300)
 
 
 if __name__ == "__main__":
