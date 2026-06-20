@@ -53,12 +53,13 @@ class ExamService:
             "Create a final exam from this study material. Return JSON only with keys "
             "title, questions, answer_key. Each question needs id, type, question, options, answer, topic.\n\n"
             f"{exam_language_instruction(language)}\n"
+            "Use only the provided PDF context. Do not create questions from outside knowledge.\n"
             "Use only these question types: multiple_choice, true_false, short_answer.\n"
             "Create a different version each time while staying based only on the material.\n"
             f"Variation seed: {seed}\n"
             f"Question count: {max(1, min(options.question_count, 25))}\n"
             f"Difficulty: {options.difficulty}\n"
-            f"Study material:\n{context[:12000]}"
+            f"Provided PDF context:\n{context[:12000]}"
         )
 
     def _call_ai(self, context: str, options: ExamOptions) -> str:

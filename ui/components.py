@@ -81,6 +81,8 @@ def render_status_bar() -> None:
         with action_cols[0]:
             if st.button(t("change_pdf"), key="change-pdf", use_container_width=True):
                 st.session_state.current_page = "Upload"
+                source = "folder" if st.session_state.uploaded_folder_files else "file"
+                st.session_state.upload_source = source
                 st.rerun()
 
 

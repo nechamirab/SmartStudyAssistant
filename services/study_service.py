@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from services.general_ai_service import GeneralAIService
 from translations import normalize_language, study_plan_language_instruction
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -62,9 +67,15 @@ class StudyService:
         if not usable_pages:
             return []
 
+        group_size = max(1, pages_per_section)
+        target_count = max(1, (len(usable_pages) + group_size - 1) // group_size)
+        ai_sections = self._generate_ai_study_plan_for_sessions(usable_pages, target_count, language)
+        if ai_sections:
+            return ai_sections
+
         sections: list[StudySection] = []
-        for start in range(0, len(usable_pages), max(1, pages_per_section)):
-            group = usable_pages[start : start + max(1, pages_per_section)]
+        for start in range(0, len(usable_pages), group_size):
+            group = usable_pages[start : start + group_size]
             start_page = int(getattr(group[0], "page_number", start + 1))
             end_page = int(getattr(group[-1], "page_number", start_page))
             text = self._clean(" ".join(getattr(page, "text", "") or "" for page in group))
@@ -96,6 +107,10 @@ class StudyService:
             return []
 
         target_count = max(1, min(int(session_count or 1), len(usable_pages)))
+        ai_sections = self._generate_ai_study_plan_for_sessions(usable_pages, target_count, language)
+        if ai_sections:
+            return ai_sections
+
         base_size, extra = divmod(len(usable_pages), target_count)
         sections: list[StudySection] = []
         cursor = 0
@@ -122,6 +137,226 @@ class StudyService:
                 )
             )
         return sections
+
+    def _generate_ai_study_plan_for_sessions(
+        self,
+        usable_pages: list[Any],
+        target_count: int,
+        language: str = "en",
+    ) -> list[StudySection]:
+        context = self._ai_page_context(usable_pages)
+        if not context:
+            return []
+
+        system_prompt = (
+            "You create exam-focused study plans from extracted PDF text. "
+            "Return only valid JSON that follows the requested schema. "
+            "Do not include markdown, commentary, citations, or extra keys."
+        )
+        language_name = "Hebrew" if normalize_language(language) == "he" else "English"
+        prompt = (
+            "Create a study plan by grouping the PDF pages into coherent study sessions.\n"
+            f"{study_plan_language_instruction(language)}\n"
+            f"Return exactly {target_count} sections.\n"
+            f"Write titles, summaries, key concepts, and learning objectives in {language_name}.\n"
+            "Use only the provided page text.\n"
+            "Prefer topic boundaries over equal page counts, but keep page ranges ordered and non-overlapping.\n"
+            "Each section must have this shape:\n"
+            "{\n"
+            '  "section_number": 1,\n'
+            '  "title": "short topic title",\n'
+            '  "start_page": 1,\n'
+            '  "end_page": 2,\n'
+            '  "estimated_minutes": 25,\n'
+            '  "difficulty": "Easy|Medium|Hard",\n'
+            '  "summary": "2-3 sentence student-facing summary",\n'
+            '  "key_concepts": ["concept 1", "concept 2"],\n'
+            '  "learning_objectives": ["objective 1", "objective 2"]\n'
+            "}\n"
+            "Return a JSON object with one top-level key named sections.\n\n"
+            f"Readable page numbers: {', '.join(str(int(getattr(page, 'page_number', 0) or 0)) for page in usable_pages)}\n\n"
+            f"PDF page text:\n{context}"
+        )
+
+        try:
+            response = GeneralAIService().complete(
+                system_prompt,
+                prompt,
+                language=language,
+                response_format={"type": "json_object"},
+            )
+            if not response["ok"]:
+                return []
+            payload = self._parse_ai_json(response.get("answer", ""))
+            return self._sections_from_ai_payload(payload, usable_pages, target_count, language)
+        except Exception as exc:
+            logger.debug("AI study-plan generation failed; using heuristic fallback: %s", exc)
+            return []
+
+    def _sections_from_ai_payload(
+        self,
+        payload: Any,
+        usable_pages: list[Any],
+        target_count: int,
+        language: str = "en",
+    ) -> list[StudySection]:
+        if isinstance(payload, dict):
+            raw_sections = payload.get("sections")
+        else:
+            raw_sections = payload
+        if not isinstance(raw_sections, list) or len(raw_sections) != target_count:
+            return []
+
+        readable_page_numbers = sorted(
+            int(getattr(page, "page_number", 0) or 0)
+            for page in usable_pages
+            if int(getattr(page, "page_number", 0) or 0) > 0
+        )
+        if not readable_page_numbers:
+            return []
+
+        first_page = readable_page_numbers[0]
+        last_page = readable_page_numbers[-1]
+        sections: list[StudySection] = []
+        previous_end = first_page - 1
+        covered_readable_pages: set[int] = set()
+
+        for index, item in enumerate(raw_sections, start=1):
+            if not isinstance(item, dict):
+                return []
+
+            start_page = self._coerce_int(item.get("start_page"), default=0)
+            end_page = self._coerce_int(item.get("end_page"), default=0)
+            if start_page < first_page or end_page > last_page or start_page > end_page:
+                return []
+            if start_page <= previous_end:
+                return []
+            pages_in_range = [
+                page_number for page_number in readable_page_numbers if start_page <= page_number <= end_page
+            ]
+            if not pages_in_range:
+                return []
+            covered_readable_pages.update(pages_in_range)
+
+            section_text = self._clean(
+                " ".join(
+                    getattr(page, "text", "") or ""
+                    for page in usable_pages
+                    if start_page <= int(getattr(page, "page_number", 0) or 0) <= end_page
+                )
+            )
+            concepts = self._clean_string_list(item.get("key_concepts"), limit=6) or self._key_concepts(section_text)
+            title = self._clean(str(item.get("title", "") or ""))
+            if not self._is_meaningful_title(title):
+                title = self._title(
+                    [
+                        page
+                        for page in usable_pages
+                        if start_page <= int(getattr(page, "page_number", 0) or 0) <= end_page
+                    ],
+                    index,
+                    start_page,
+                    end_page,
+                    language,
+                )
+            else:
+                title = self._with_section_prefix(title, index, language)
+
+            summary = self._clean(str(item.get("summary", "") or ""))
+            if not summary:
+                summary = self._summary(section_text, start_page, end_page, language)
+
+            sections.append(
+                StudySection(
+                    section_number=index,
+                    title=title,
+                    start_page=start_page,
+                    end_page=end_page,
+                    estimated_minutes=max(5, min(90, self._coerce_int(item.get("estimated_minutes"), 20))),
+                    difficulty=self._normalize_difficulty(str(item.get("difficulty", "") or ""), section_text),
+                    summary=summary[:420].rstrip() + ("..." if len(summary) > 420 else ""),
+                    learning_objectives=(
+                        self._clean_string_list(item.get("learning_objectives"), limit=5)
+                        or self._learning_objectives(section_text, concepts, start_page, end_page, language)
+                    ),
+                    key_concepts=concepts,
+                )
+            )
+            previous_end = end_page
+
+        if covered_readable_pages != set(readable_page_numbers):
+            return []
+        return sections
+
+    @classmethod
+    def _parse_ai_json(cls, raw: str) -> Any:
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"\s*```$", "", text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            start_candidates = [position for position in (text.find("{"), text.find("[")) if position >= 0]
+            if not start_candidates:
+                raise
+            start = min(start_candidates)
+            end = max(text.rfind("}"), text.rfind("]"))
+            if end <= start:
+                raise
+            return json.loads(text[start : end + 1])
+
+    @classmethod
+    def _ai_page_context(cls, pages: list[Any], max_chars: int = 14000) -> str:
+        if not pages:
+            return ""
+        per_page = max(120, min(1200, max_chars // max(1, len(pages))))
+        parts = []
+        for page in pages:
+            page_number = int(getattr(page, "page_number", 0) or 0)
+            text = cls._clean(getattr(page, "text", "") or "")
+            if not text:
+                continue
+            parts.append(f"Page {page_number}\n{text[:per_page]}")
+        return "\n\n".join(parts)[:max_chars]
+
+    @staticmethod
+    def _clean_string_list(raw: Any, limit: int = 5) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        cleaned: list[str] = []
+        for item in raw:
+            value = re.sub(r"\s+", " ", str(item or "")).strip()
+            if value and value not in cleaned:
+                cleaned.append(value[:140])
+            if len(cleaned) >= limit:
+                break
+        return cleaned
+
+    @staticmethod
+    def _coerce_int(raw: Any, default: int = 0) -> int:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _normalize_difficulty(raw: str, text: str) -> str:
+        value = (raw or "").strip().lower()
+        if value in {"easy", "medium", "hard"}:
+            return value.capitalize()
+        return StudyService._difficulty(text)
+
+    @staticmethod
+    def _with_section_prefix(title: str, section_number: int, language: str = "en") -> str:
+        title = re.sub(r"^\d+(\.\d+)*\s*", "", title).strip(" -:")
+        if normalize_language(language) == "he":
+            if title.startswith("חלק"):
+                return title
+            return f"חלק {section_number}: {title}"
+        if re.match(r"^section\s+\d+\s*:", title, flags=re.IGNORECASE):
+            return title
+        return f"Section {section_number}: {title}"
 
     @staticmethod
     def readable_page_count(pages: list[Any]) -> int:

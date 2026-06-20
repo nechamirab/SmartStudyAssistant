@@ -54,6 +54,52 @@ class GeneralAIService:
     def build_tutor_prompt(language: str = "en") -> str:
         return tutor_language_instruction(language)
 
+    def complete(
+        self,
+        system_prompt: str,
+        prompt: str,
+        language: str = "en",
+        response_format: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        language = normalize_language(language)
+        prompt = (prompt or "").strip()
+        if not prompt:
+            return {"ok": False, "answer": translate("enter_question_first", language), "provider": "none"}
+
+        provider = self.select_provider()
+        if provider is None:
+            return {
+                "ok": False,
+                "answer": (
+                    "Set OPENAI_API_KEY or GROQ_API_KEY to use AI features."
+                    if language == "en"
+                    else "הגדירו OPENAI_API_KEY או GROQ_API_KEY כדי להשתמש ביכולות AI."
+                ),
+                "provider": "none",
+            }
+
+        conversation = [
+            {"role": "system", "content": system_prompt.strip()},
+            {"role": "user", "content": prompt},
+        ]
+        try:
+            if provider.name == "openai":
+                answer = self._ask_openai(provider, conversation, response_format=response_format)
+            else:
+                answer = self._ask_groq(provider, conversation, response_format=response_format)
+        except Exception as exc:
+            answer = (
+                f"פעולת ה-AI נכשלה כרגע: {exc}"
+                if language == "he"
+                else f"The AI request could not complete right now: {exc}"
+            )
+            return {
+                "ok": False,
+                "answer": answer,
+                "provider": provider.name,
+            }
+        return {"ok": True, "answer": answer, "provider": provider.name}
+
     def ask(self, messages: list[dict[str, str]], question: str, language: str = "en") -> dict[str, Any]:
         language = normalize_language(language)
         question = (question or "").strip()
@@ -101,23 +147,38 @@ class GeneralAIService:
             }
         return {"ok": True, "answer": answer, "provider": provider.name}
 
-    def _ask_openai(self, provider: AIProvider, messages: list[dict[str, str]]) -> str:
+    def _ask_openai(
+        self,
+        provider: AIProvider,
+        messages: list[dict[str, str]],
+        response_format: dict[str, Any] | None = None,
+    ) -> str:
         from openai import OpenAI
 
         client = OpenAI(api_key=provider.api_key)
-        response = client.chat.completions.create(
-            model=provider.model,
-            messages=messages,
-            temperature=0.3,
-        )
+        request: dict[str, Any] = {
+            "model": provider.model,
+            "messages": messages,
+            "temperature": 0.3,
+        }
+        if response_format:
+            request["response_format"] = response_format
+        response = client.chat.completions.create(**request)
         return (response.choices[0].message.content or "").strip()
 
-    def _ask_groq(self, provider: AIProvider, messages: list[dict[str, str]]) -> str:
+    def _ask_groq(
+        self,
+        provider: AIProvider,
+        messages: list[dict[str, str]],
+        response_format: dict[str, Any] | None = None,
+    ) -> str:
         payload = {
             "model": provider.model,
             "messages": messages,
             "temperature": 0.3,
         }
+        if response_format:
+            payload["response_format"] = response_format
         request = urllib.request.Request(
             self.GROQ_ENDPOINT,
             data=json.dumps(payload).encode("utf-8"),
