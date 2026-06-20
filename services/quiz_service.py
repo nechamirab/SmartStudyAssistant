@@ -112,7 +112,6 @@ class QuizService:
 
         return "\n\n".join(parts)[:max_chars]
 
-    @classmethod
     @staticmethod
     def build_quiz_prompt(language: str = "en") -> str:
         return quiz_language_instruction(language)
