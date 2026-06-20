@@ -518,6 +518,77 @@ class TestMVPServices(unittest.TestCase):
 
         self.assertEqual(answer, workflow.NOT_ENOUGH_INFORMATION)
 
+    def test_chapter_summary_does_not_return_not_found_when_section_exists(self):
+        workflow = import_workflow_with_fake_streamlit()
+
+        sections = [
+            StudySection(1, "Section 1: Intro", 1, 1, 10, "Easy", "Intro.", [], ["Intro"]),
+            StudySection(4, "Section 4: Learning", 4, 5, 20, "Medium", "Learning principles.", [], ["Learning"]),
+        ]
+        pages = [
+            DocumentPage(1, "Introductory material."),
+            DocumentPage(4, "Learning changes behavior through experience."),
+            DocumentPage(5, "Reinforcement and conditioning are central learning ideas."),
+        ]
+
+        class FakeSt:
+            session_state = FakeSessionState({
+                "pages": pages,
+                "sections": sections,
+                "language": "en",
+            })
+
+        with patch.object(workflow, "st", FakeSt), patch.object(workflow, "has_pdf", return_value=True):
+            with patch.object(workflow, "GeneralAIService") as ai_service:
+                ai_service.return_value.complete.return_value = {
+                    "ok": True,
+                    "answer": "Chapter 4 focuses on learning principles.",
+                    "provider": "openai",
+                }
+                answer = workflow.answer_section_question(sections[0], "what is the main idea of chapter 4?")
+
+        prompt = ai_service.return_value.complete.call_args.args[1]
+        self.assertIn("Learning changes behavior", prompt)
+        self.assertIn("Study Section 4", answer)
+        self.assertNotEqual(answer, workflow.NOT_ENOUGH_INFORMATION)
+
+    def test_study_plan_intent_uses_sections_summary(self):
+        workflow = import_workflow_with_fake_streamlit()
+
+        sections = [
+            StudySection(1, "Learning", 1, 2, 30, "Medium", "Learning principles.", ["Explain conditioning."], ["Learning"]),
+            StudySection(2, "Memory", 3, 4, 25, "Hard", "Memory systems.", ["Compare memory types."], ["Memory"]),
+        ]
+        pages = [
+            DocumentPage(1, "Unrelated page body that should not drive the study plan."),
+            DocumentPage(3, "Another page body."),
+        ]
+
+        class FakeSt:
+            session_state = FakeSessionState({
+                "pages": pages,
+                "sections": sections,
+                "language": "en",
+                "ai_tutor_history": [],
+            })
+
+        with patch.object(workflow, "st", FakeSt), patch.object(workflow, "has_pdf", return_value=True):
+            with patch.object(workflow, "GeneralAIService") as ai_service:
+                ai_service.return_value.complete.return_value = {
+                    "ok": True,
+                    "answer": "Study Learning, then Memory.",
+                    "provider": "openai",
+                }
+                result = workflow.answer_ai_tutor("Help me build a study plan", use_pdf_context=True)
+
+        prompt = ai_service.return_value.complete.call_args.args[1]
+        self.assertEqual(result["provider"], "openai")
+        self.assertEqual(result["context"], "pdf")
+        self.assertIn("Session 1: Learning", prompt)
+        self.assertIn("Estimated time: 30 minutes", prompt)
+        self.assertIn("Session 2: Memory", prompt)
+        self.assertNotIn("Unrelated page body", prompt)
+
     def test_ai_tutor_pdf_overview_uses_representative_context(self):
         workflow = import_workflow_with_fake_streamlit()
 

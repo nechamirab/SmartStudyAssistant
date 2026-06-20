@@ -228,6 +228,14 @@ def generate_explanation(section: StudySection) -> str:
 
 
 def answer_section_question(section: StudySection, question: str) -> str:
+    intent = ContextRetrievalService.detect_query_intent(question)
+    if intent["intent"] == "chapter_summary":
+        return answer_chapter_summary_result(question, intent)["answer"]
+    if intent["intent"] == "section_summary":
+        return answer_study_section_summary_result(question, intent)["answer"]
+    if intent["intent"] == "study_plan":
+        return answer_study_plan_result(question)["answer"]
+
     chunks = retrieve_pdf_chunks(question)
     if not chunks:
         return NOT_ENOUGH_INFORMATION
@@ -344,6 +352,107 @@ def pdf_context_unavailable_message(language: str) -> str:
     )
 
 
+def answer_chapter_summary_result(question: str, intent: dict[str, Any] | None = None) -> dict[str, Any]:
+    intent = intent or ContextRetrievalService.detect_query_intent(question)
+    chapter_context, sources = ContextRetrievalService.retrieve_chapter_context(
+        intent.get("chapter_numbers", []),
+        st.session_state.pages,
+        st.session_state.sections,
+        max_chars=9000,
+    )
+    if not chapter_context or not sources:
+        return {"ok": False, "answer": NOT_ENOUGH_INFORMATION, "provider": "local", "context": "pdf"}
+
+    prompt = build_chapter_summary_prompt(question, chapter_context)
+    response = GeneralAIService().complete(
+        GROUNDED_SYSTEM_PROMPT,
+        prompt,
+        language=current_language(),
+    )
+    if response["ok"]:
+        return {
+            "ok": True,
+            "answer": with_structured_sources(response["answer"], sources),
+            "provider": response.get("provider", "ai"),
+            "context": "pdf",
+        }
+
+    return {
+        "ok": True,
+        "answer": with_structured_sources(local_context_summary("Main idea from requested chapter context", chapter_context), sources),
+        "provider": "local",
+        "context": "pdf",
+    }
+
+
+def answer_study_section_summary_result(question: str, intent: dict[str, Any] | None = None) -> dict[str, Any]:
+    intent = intent or ContextRetrievalService.detect_query_intent(question)
+    section_numbers = intent.get("section_numbers", [])
+    if not section_numbers:
+        return {"ok": False, "answer": NOT_ENOUGH_INFORMATION, "provider": "local", "context": "pdf"}
+
+    selected = [
+        section
+        for section in st.session_state.sections
+        if int(section.section_number) in set(int(number) for number in section_numbers)
+    ]
+    if not selected:
+        return {"ok": False, "answer": NOT_ENOUGH_INFORMATION, "provider": "local", "context": "pdf"}
+
+    section_context_text = format_section_summary_context(selected)
+    if not section_context_text:
+        return {"ok": False, "answer": NOT_ENOUGH_INFORMATION, "provider": "local", "context": "pdf"}
+
+    prompt = build_section_summary_prompt(question, section_context_text)
+    response = GeneralAIService().complete(
+        GROUNDED_SYSTEM_PROMPT,
+        prompt,
+        language=current_language(),
+    )
+    sources = [
+        {
+            "type": "study_section",
+            "number": section.section_number,
+            "title": section.title,
+            "start_page": section.start_page,
+            "end_page": section.end_page,
+            "matched_by": "section",
+        }
+        for section in selected
+    ]
+    if response["ok"]:
+        return {
+            "ok": True,
+            "answer": with_structured_sources(response["answer"], sources),
+            "provider": response.get("provider", "ai"),
+            "context": "pdf",
+        }
+
+    return {
+        "ok": True,
+        "answer": with_structured_sources(local_context_summary("Main idea from requested study section", section_context_text), sources),
+        "provider": "local",
+        "context": "pdf",
+    }
+
+
+def answer_study_plan_result(question: str) -> dict[str, Any]:
+    sections_summary = format_saved_sections_for_study_plan()
+    if not sections_summary:
+        return {"ok": False, "answer": NOT_ENOUGH_INFORMATION, "provider": "local", "context": "pdf"}
+
+    prompt = build_study_plan_prompt(question, sections_summary)
+    response = GeneralAIService().complete(
+        GROUNDED_SYSTEM_PROMPT,
+        prompt,
+        language=current_language(),
+    )
+    if response["ok"]:
+        return {"ok": True, "answer": response["answer"], "provider": response.get("provider", "ai"), "context": "pdf"}
+
+    return {"ok": True, "answer": local_study_plan_from_sections(), "provider": "local", "context": "pdf"}
+
+
 def answer_from_retrieved_chunks(question: str, chunks: list[dict[str, Any]]) -> str:
     return answer_from_retrieved_chunks_result(question, chunks)["answer"]
 
@@ -400,6 +509,58 @@ def build_grounded_pdf_prompt(question: str, retrieved_context: str) -> str:
     )
 
 
+def build_chapter_summary_prompt(question: str, chapter_context: str) -> str:
+    return (
+        "You are a grounded PDF study assistant.\n"
+        "The user is asking for the main idea or summary of one or more chapters.\n"
+        "Answer ONLY using the provided PDF context.\n"
+        "Do not use outside knowledge.\n"
+        "If the provided context does not contain enough information, say:\n"
+        f"\"{NOT_ENOUGH_INFORMATION}\"\n\n"
+        "For each requested chapter:\n"
+        "- Give the main idea in 2-4 sentences.\n"
+        "- List 3-5 key points.\n"
+        "- Add a short \"What to focus on while studying\" section.\n"
+        "- Include the source chapter/page range.\n\n"
+        f"Provided PDF context:\n{chapter_context}\n\n"
+        f"Question:\n{question}"
+    )
+
+
+def build_section_summary_prompt(question: str, section_context_text: str) -> str:
+    return (
+        "You are a grounded PDF study assistant.\n"
+        "The user is asking for the main idea or summary of a study section.\n"
+        "Answer ONLY using the provided study section.\n"
+        "Do not use outside knowledge.\n"
+        "Give:\n"
+        "- Main idea\n"
+        "- Key points\n"
+        "- What to focus on\n"
+        "- Source section/page range\n\n"
+        f"Study section:\n{section_context_text}\n\n"
+        f"Question:\n{question}"
+    )
+
+
+def build_study_plan_prompt(question: str, sections_summary: str) -> str:
+    return (
+        "You are a grounded PDF study assistant.\n"
+        "Build a study plan ONLY from the saved study sections below.\n"
+        "Do not use outside knowledge.\n"
+        "Use the section titles, summaries, key concepts, difficulty, and estimated time.\n\n"
+        "Create a practical study plan:\n"
+        "- ordered sessions\n"
+        "- time per session\n"
+        "- what to read\n"
+        "- what to practice\n"
+        "- review tips\n"
+        "- final exam preparation\n\n"
+        f"Saved study sections:\n{sections_summary}\n\n"
+        f"Question:\n{question}"
+    )
+
+
 def with_retrieved_sources(answer: str, chunks: list[dict[str, Any]]) -> str:
     if (answer or "").strip() == NOT_ENOUGH_INFORMATION:
         return NOT_ENOUGH_INFORMATION
@@ -408,6 +569,34 @@ def with_retrieved_sources(answer: str, chunks: list[dict[str, Any]]) -> str:
         return answer.strip() or NOT_ENOUGH_INFORMATION
     sources = "\n".join(f"- {label}" for label in labels)
     return f"{(answer or NOT_ENOUGH_INFORMATION).strip()}\n\nRetrieved sources:\n{sources}"
+
+
+def with_structured_sources(answer: str, sources: list[dict[str, Any]]) -> str:
+    if (answer or "").strip() == NOT_ENOUGH_INFORMATION:
+        return NOT_ENOUGH_INFORMATION
+    labels = format_structured_sources(sources)
+    if not labels:
+        return answer.strip() or NOT_ENOUGH_INFORMATION
+    return f"{(answer or NOT_ENOUGH_INFORMATION).strip()}\n\nRetrieved sources:\n{labels}"
+
+
+def format_structured_sources(sources: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for source in sources:
+        source_type = str(source.get("type", ""))
+        number = int(source.get("number", 0) or 0)
+        start_page = int(source.get("start_page", 0) or 0)
+        end_page = int(source.get("end_page", start_page) or start_page)
+        page_label_text = f"Pages {start_page}-{end_page}" if start_page != end_page else f"Page {start_page}"
+        if source_type == "chapter":
+            lines.append(f"- Chapter {number} - {page_label_text}")
+        else:
+            lines.append(f"- Study Section {number} - {page_label_text}")
+            if source.get("matched_by") == "section_fallback":
+                lines.append(
+                    f"  Note: Chapter heading was not detected, so the app used Study Section {number} as the closest match."
+                )
+    return "\n".join(lines)
 
 
 def local_grounded_answer(question: str, chunks: list[dict[str, Any]]) -> str:
@@ -461,6 +650,81 @@ def local_overview_answer(question: str, chunks: list[dict[str, Any]]) -> str:
     return heading + "\n\n" + "\n".join(f"{index}. {idea}" for index, idea in enumerate(ideas, start=1))
 
 
+def local_context_summary(title: str, context: str) -> str:
+    sentences = split_sentences(context)
+    if not sentences:
+        return NOT_ENOUGH_INFORMATION
+    main = " ".join(sentences[:2])
+    points = sentences[2:7] or sentences[:3]
+    return (
+        f"**{title}**\n\n{main}\n\n"
+        "**Key points**\n"
+        + "\n".join(f"- {sentence}" for sentence in points[:5])
+        + "\n\n**What to focus on while studying**\n"
+        "- Review the main terms and examples in the selected source range.\n"
+        "- Connect each key point to one example from the PDF."
+    )
+
+
+def format_section_summary_context(sections: list[StudySection]) -> str:
+    parts: list[str] = []
+    for section in sections:
+        text = section_context(section)
+        if not text.strip():
+            continue
+        concepts = ", ".join(section.key_concepts[:8])
+        block = "\n".join(
+            item
+            for item in [
+                f"[Study Section {section.section_number} | {section.title} | {section.page_label}]",
+                f"Summary: {section.summary}",
+                f"Key concepts: {concepts}" if concepts else "",
+                f"Text: {text[:5000]}",
+            ]
+            if item
+        )
+        parts.append(block)
+    return "\n\n".join(parts).strip()
+
+
+def format_saved_sections_for_study_plan() -> str:
+    parts: list[str] = []
+    for section in st.session_state.sections:
+        concepts = ", ".join(section.key_concepts[:8])
+        objectives = "; ".join(section.learning_objectives[:4])
+        parts.append(
+            "\n".join(
+                item
+                for item in [
+                    f"Session {section.section_number}: {section.title}",
+                    f"Pages: {section.start_page}-{section.end_page}" if section.start_page != section.end_page else f"Page: {section.start_page}",
+                    f"Estimated time: {section.estimated_minutes} minutes",
+                    f"Difficulty: {section.difficulty}",
+                    f"Summary: {section.summary}",
+                    f"Key concepts: {concepts}" if concepts else "",
+                    f"Learning objectives: {objectives}" if objectives else "",
+                ]
+                if item
+            )
+        )
+    return "\n\n".join(parts).strip()
+
+
+def local_study_plan_from_sections() -> str:
+    if not st.session_state.sections:
+        return NOT_ENOUGH_INFORMATION
+    lines = ["**Study plan from saved PDF sections**"]
+    for section in st.session_state.sections:
+        lines.append(
+            f"- Session {section.section_number}: {section.title} "
+            f"({section.estimated_minutes} minutes, {section.page_label}). "
+            f"Read the section, review {', '.join(section.key_concepts[:3]) or 'the key concepts'}, "
+            "then answer practice questions from the PDF."
+        )
+    lines.append("\n**Final review**\n- Revisit hard sections, redo missed quiz questions, and summarize each section in your own words.")
+    return "\n".join(lines)
+
+
 def requested_item_count(question: str, default: int = 5) -> int:
     match = re.search(r"\b([1-9]|10)\b", question or "")
     if not match:
@@ -490,12 +754,19 @@ def answer_ai_tutor(question: str, use_pdf_context: bool = False) -> dict[str, A
     language = current_language()
     active_pdf = has_pdf()
     mentions_pdf_context = question_mentions_pdf_context(question)
+    intent = ContextRetrievalService.detect_query_intent(question)
     wants_pdf_context = use_pdf_context or mentions_pdf_context or is_document_overview_question(question)
 
     if mentions_pdf_context and not active_pdf:
         return {"ok": False, "answer": pdf_context_unavailable_message(language), "provider": "local"}
 
     if wants_pdf_context and active_pdf:
+        if intent["intent"] == "chapter_summary":
+            return answer_chapter_summary_result(question, intent)
+        if intent["intent"] == "section_summary":
+            return answer_study_section_summary_result(question, intent)
+        if intent["intent"] == "study_plan":
+            return answer_study_plan_result(question)
         chunks = retrieve_ai_tutor_pdf_chunks(question)
         if not chunks:
             return {"ok": False, "answer": NOT_ENOUGH_INFORMATION, "provider": "local"}
