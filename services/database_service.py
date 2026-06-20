@@ -180,7 +180,9 @@ class DatabaseService:
     def save_study_sections(self, session_id: int, sections: list[StudySection], pages: list[DocumentPage]) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM study_sections WHERE session_id = ?", (session_id,))
+
             for section in sections:
+
                 section_text = self._section_text(pages, section)
                 conn.execute(
                     """
@@ -302,6 +304,22 @@ class DatabaseService:
             if pdf_bytes:
                 self._save_session_pdf_bytes(conn, user_id, session_id, pdf_bytes)
             loaded_progress = ProgressService.load(progress)
+
+            existing_completed_rows = conn.execute(
+                """
+                SELECT section_number
+                FROM section_progress
+                WHERE user_id = ?
+                  AND session_id = ?
+                  AND completed = 1
+                """,
+                (user_id, session_id),
+            ).fetchall()
+
+            loaded_progress.completed_sections.update(
+                int(row["section_number"]) for row in existing_completed_rows
+            )
+
             conn.execute(
                 """
                 UPDATE study_sessions
@@ -320,6 +338,9 @@ class DatabaseService:
             for section in sections:
                 state = SectionStateService.get_state(section_states, section.section_number)
                 quiz_score = state.get("quiz_score")
+
+                completed = 1 if section.section_number in loaded_progress.completed_sections else 0
+
                 conn.execute(
                     """
                     INSERT INTO section_progress (
@@ -327,7 +348,7 @@ class DatabaseService:
                         quiz_score, explanation_text, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(user_id, session_id, section_number) DO UPDATE SET
-                        completed = excluded.completed,
+                        completed = MAX(section_progress.completed, excluded.completed),
                         quiz_score = excluded.quiz_score,
                         explanation_text = excluded.explanation_text,
                         updated_at = CURRENT_TIMESTAMP
@@ -336,7 +357,7 @@ class DatabaseService:
                         user_id,
                         session_id,
                         section.section_number,
-                        1 if section.section_number in loaded_progress.completed_sections else 0,
+                        completed,
                         None if quiz_score is None else float(quiz_score),
                         str(state.get("explanation", "") or ""),
                     ),
@@ -354,6 +375,7 @@ class DatabaseService:
                     final_exam_result or {},
                 )
             self.touch_session(conn, session_id)
+            conn.commit()
 
     def save_quiz_attempt(
         self,
@@ -607,7 +629,7 @@ class DatabaseService:
 
     @staticmethod
     def _json(value: Any) -> str:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+        return json.dumps(value, ensure_ascii=False)
 
     @staticmethod
     def _loads(value: Any, default: Any) -> Any:

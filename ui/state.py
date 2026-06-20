@@ -70,6 +70,15 @@ def restore_saved_state() -> None:
     if st.session_state.persistence_loaded:
         return
     st.session_state.persistence_loaded = True
+
+    try:
+        from services.auth_service import AuthService
+
+        if AuthService().current_user():
+            return
+    except Exception:
+        pass
+
     if st.session_state.get("auth_user"):
         # Logged-in users should resume through SQLite saved sessions only.
         # Loading the legacy JSON cache here would leak one user's active PDF
@@ -157,6 +166,10 @@ def restore_latest_sqlite_session() -> None:
         if not sessions:
             return
         payload = database.load_study_session(user_id, int(sessions[0]["id"]))
+
+        print("LOAD SQLITE SESSION:", sessions[0]["id"])
+        print("LOAD PROGRESS:", payload.get("progress") if payload else None)
+
         if not payload:
             return
         apply_sqlite_session_payload(payload, status_message="Latest saved session restored.")
@@ -306,6 +319,11 @@ def persist_sqlite_state() -> None:
         user = AuthService().current_user()
         if not user:
             return
+
+        print("SAVE SQLITE SESSION:", session_id)
+        print("SAVE COMPLETED:", st.session_state.progress.completed_sections)
+        print("SAVE CURRENT SECTION:", st.session_state.current_section_index)
+
         DatabaseService().save_runtime_state(
             user_id=int(user["id"]),
             session_id=int(session_id),
