@@ -302,6 +302,48 @@ def is_document_overview_question(question: str) -> bool:
     return any(phrase in compact for phrase in overview_phrases)
 
 
+def question_mentions_pdf_context(question: str) -> bool:
+    compact = re.sub(r"\s+", " ", (question or "").lower()).strip()
+    pdf_phrases = [
+        "pdf",
+        "the document",
+        "this document",
+        "uploaded document",
+        "uploaded file",
+        "uploaded material",
+        "my material",
+        "this material",
+        "the material",
+        "from the file",
+        "from the document",
+        "from the pdf",
+        "in the file",
+        "in the document",
+        "in the pdf",
+        "ה-pdf",
+        "המסמך",
+        "בקובץ",
+        "במסמך",
+        "בחומר",
+        "מהקובץ",
+        "מהמסמך",
+        "מהחומר",
+    ]
+    return any(phrase in compact for phrase in pdf_phrases)
+
+
+def pdf_context_unavailable_message(language: str) -> str:
+    if language == "he":
+        return (
+            "אין כרגע הקשר PDF פעיל לשאלה הזאת. עברו לעמוד Upload והעלו PDF, "
+            "או לחצו Continue על סשן שמור, ואז שאלו שוב עם Use uploaded PDF context מסומן."
+        )
+    return (
+        "There is no active PDF context loaded for this question. Go to Upload and upload a PDF, "
+        "or click Continue on a saved session, then ask again with Use uploaded PDF context checked."
+    )
+
+
 def answer_from_retrieved_chunks(question: str, chunks: list[dict[str, Any]]) -> str:
     retrieved_context = ContextRetrievalService.format_chunks_for_prompt(chunks, max_chars=7000)
     if not retrieved_context:
@@ -427,7 +469,14 @@ def source_line(chunk: dict[str, Any]) -> str:
 
 def answer_ai_tutor(question: str, use_pdf_context: bool = False) -> dict[str, Any]:
     language = current_language()
-    if use_pdf_context and has_pdf():
+    active_pdf = has_pdf()
+    mentions_pdf_context = question_mentions_pdf_context(question)
+    wants_pdf_context = use_pdf_context or mentions_pdf_context or is_document_overview_question(question)
+
+    if mentions_pdf_context and not active_pdf:
+        return {"ok": False, "answer": pdf_context_unavailable_message(language), "provider": "local"}
+
+    if wants_pdf_context and active_pdf:
         chunks = retrieve_ai_tutor_pdf_chunks(question)
         if not chunks:
             return {"ok": False, "answer": NOT_ENOUGH_INFORMATION, "provider": "local"}

@@ -468,6 +468,67 @@ class TestMVPServices(unittest.TestCase):
         self.assertIn("Gradient descent updates", prompt)
         self.assertNotEqual(result["answer"], workflow.NOT_ENOUGH_INFORMATION)
 
+    def test_ai_tutor_pdf_question_auto_uses_pdf_context(self):
+        workflow = import_workflow_with_fake_streamlit()
+
+        sections = [StudySection(1, "Section 1: BFS", 1, 1, 10, "Easy", "Graph traversal.", [], ["BFS"])]
+        pages = [DocumentPage(1, "BFS uses a queue to visit graph nodes level by level.")]
+
+        class FakeSt:
+            session_state = FakeSessionState({
+                "pages": pages,
+                "sections": sections,
+                "language": "en",
+                "ai_tutor_history": [],
+            })
+
+        with patch.object(workflow, "st", FakeSt), patch.object(workflow, "has_pdf", return_value=True):
+            with patch.object(workflow, "GeneralAIService") as ai_service:
+                ai_service.return_value.complete.return_value = {"ok": True, "answer": "BFS is a main idea."}
+                result = workflow.answer_ai_tutor("What are the 5 main ideas in the PDF?", use_pdf_context=False)
+
+        self.assertEqual(result["provider"], "grounded-pdf")
+        ai_service.return_value.complete.assert_called_once()
+        ai_service.return_value.ask.assert_not_called()
+
+    def test_ai_tutor_pdf_question_without_active_pdf_does_not_call_general_ai(self):
+        workflow = import_workflow_with_fake_streamlit()
+
+        class FakeSt:
+            session_state = FakeSessionState({
+                "pages": [],
+                "sections": [],
+                "language": "en",
+                "ai_tutor_history": [],
+            })
+
+        with patch.object(workflow, "st", FakeSt), patch.object(workflow, "has_pdf", return_value=False):
+            with patch.object(workflow, "GeneralAIService") as ai_service:
+                result = workflow.answer_ai_tutor("What are the 5 main ideas in the PDF?", use_pdf_context=False)
+
+        self.assertEqual(result["provider"], "local")
+        self.assertIn("no active PDF context", result["answer"])
+        ai_service.return_value.ask.assert_not_called()
+
+    def test_ai_tutor_generic_overview_without_pdf_can_use_general_ai(self):
+        workflow = import_workflow_with_fake_streamlit()
+
+        class FakeSt:
+            session_state = FakeSessionState({
+                "pages": [],
+                "sections": [],
+                "language": "en",
+                "ai_tutor_history": [],
+            })
+
+        with patch.object(workflow, "st", FakeSt), patch.object(workflow, "has_pdf", return_value=False):
+            with patch.object(workflow, "GeneralAIService") as ai_service:
+                ai_service.return_value.ask.return_value = {"ok": True, "answer": "Photosynthesis summary.", "provider": "openai"}
+                result = workflow.answer_ai_tutor("Summarize photosynthesis", use_pdf_context=False)
+
+        self.assertEqual(result["provider"], "openai")
+        ai_service.return_value.ask.assert_called_once()
+
     def test_user_registration_creates_user(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = DatabaseService(Path(tmpdir) / "test.db")

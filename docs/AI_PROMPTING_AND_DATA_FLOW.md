@@ -198,7 +198,7 @@ Data sent:
 | Data type | Sent? | Details |
 | --- | --- | --- |
 | User input | Yes | The chat input question is sent. |
-| Extracted PDF text | Optional | If "Use uploaded PDF context" is checked and a PDF exists, `retrieve_ai_tutor_pdf_chunks()` first retrieves top relevant chunks locally. For broad requests such as summaries, main ideas, study plans, or practice questions, it falls back to representative chunks across sections. |
+| Extracted PDF text | Optional | If "Use uploaded PDF context" is checked, or the question explicitly refers to the PDF/document/material, `retrieve_ai_tutor_pdf_chunks()` first retrieves top relevant chunks locally. For broad requests such as summaries, main ideas, study plans, or practice questions, it falls back to representative chunks across sections. |
 | Section/session content | Optional | Grounded mode sends retrieved or representative section/page chunks with source metadata. General mode sends no PDF context. |
 | Metadata | Yes, if context enabled | Retrieved chunks include section number, section title, page, and text. |
 | Conversation history | General mode only | General tutor mode sends recent chat history through `GeneralAIService.ask()`. Grounded PDF mode does not send history. |
@@ -218,6 +218,7 @@ Fallback:
 
 - If no provider is configured or the request fails, the UI returns a setup message explaining that `OPENAI_API_KEY` or `GROQ_API_KEY` is required.
 - If PDF context is enabled and a broad PDF-level question has representative chunks, provider failure falls back to a local section-based overview built from selected PDF chunks.
+- If the question asks about the PDF but no active PDF context is loaded, the app returns a local instruction to upload a PDF or continue a saved session instead of sending the question to general OpenAI chat.
 - If PDF context is enabled but no PDF text exists and no representative chunks can be built, the app returns the not-enough-information message.
 
 ### Quiz Generation
