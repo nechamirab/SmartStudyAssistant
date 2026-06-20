@@ -190,7 +190,7 @@ Fallback:
 | Feature | General chat-style study assistant, optionally using uploaded PDF context. |
 | Main file | `ui/workflow.py` |
 | Function | `answer_ai_tutor(question, use_pdf_context=False)` |
-| Provider wrapper | `GeneralAIService.ask()` |
+| Provider wrapper | `GeneralAIService.ask()` for plain general chat; `GeneralAIService.complete()` for PDF-context Tutor answers. |
 | UI caller | `pages/ai_tutor_page.py` |
 
 Data sent:
@@ -204,6 +204,8 @@ Data sent:
 | Conversation history | General mode only | General tutor mode sends recent chat history through `GeneralAIService.ask()`. Grounded PDF mode does not send history. |
 | Full PDF text | No | The whole PDF is searched locally; the AI receives only selected chunks. Broad PDF-level questions receive representative chunks from multiple sections, not the full PDF. |
 | Private data | Possibly | Chat history, user question, and selected PDF context may leave the local app. |
+
+Important implementation note: the app does not attach the binary PDF file to OpenAI. It extracts the PDF text locally, selects relevant or representative chunks, and sends those text chunks to the selected provider. The UI reports the real provider, for example `openai with PDF context`.
 
 General system instruction:
 

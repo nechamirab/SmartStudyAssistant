@@ -458,12 +458,14 @@ class TestMVPServices(unittest.TestCase):
                 ai_service.return_value.complete.return_value = {
                     "ok": True,
                     "answer": "1. BFS uses a queue.\n2. Gradient descent updates weights.",
+                    "provider": "openai",
                 }
                 result = workflow.answer_ai_tutor("What are the main 5 ideas from the PDF?", use_pdf_context=True)
 
         prompt = ai_service.return_value.complete.call_args.args[1]
         self.assertTrue(result["ok"])
-        self.assertEqual(result["provider"], "grounded-pdf")
+        self.assertEqual(result["provider"], "openai")
+        self.assertEqual(result["context"], "pdf")
         self.assertIn("BFS uses a queue", prompt)
         self.assertIn("Gradient descent updates", prompt)
         self.assertNotEqual(result["answer"], workflow.NOT_ENOUGH_INFORMATION)
@@ -484,10 +486,15 @@ class TestMVPServices(unittest.TestCase):
 
         with patch.object(workflow, "st", FakeSt), patch.object(workflow, "has_pdf", return_value=True):
             with patch.object(workflow, "GeneralAIService") as ai_service:
-                ai_service.return_value.complete.return_value = {"ok": True, "answer": "BFS is a main idea."}
+                ai_service.return_value.complete.return_value = {
+                    "ok": True,
+                    "answer": "BFS is a main idea.",
+                    "provider": "openai",
+                }
                 result = workflow.answer_ai_tutor("What are the 5 main ideas in the PDF?", use_pdf_context=False)
 
-        self.assertEqual(result["provider"], "grounded-pdf")
+        self.assertEqual(result["provider"], "openai")
+        self.assertEqual(result["context"], "pdf")
         ai_service.return_value.complete.assert_called_once()
         ai_service.return_value.ask.assert_not_called()
 

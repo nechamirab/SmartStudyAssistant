@@ -345,9 +345,13 @@ def pdf_context_unavailable_message(language: str) -> str:
 
 
 def answer_from_retrieved_chunks(question: str, chunks: list[dict[str, Any]]) -> str:
+    return answer_from_retrieved_chunks_result(question, chunks)["answer"]
+
+
+def answer_from_retrieved_chunks_result(question: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
     retrieved_context = ContextRetrievalService.format_chunks_for_prompt(chunks, max_chars=7000)
     if not retrieved_context:
-        return NOT_ENOUGH_INFORMATION
+        return {"ok": False, "answer": NOT_ENOUGH_INFORMATION, "provider": "local", "context": "pdf"}
 
     prompt = build_grounded_pdf_prompt(question, retrieved_context)
     response = GeneralAIService().complete(
@@ -356,12 +360,27 @@ def answer_from_retrieved_chunks(question: str, chunks: list[dict[str, Any]]) ->
         language=current_language(),
     )
     if response["ok"]:
-        return with_retrieved_sources(response["answer"], chunks)
+        return {
+            "ok": True,
+            "answer": with_retrieved_sources(response["answer"], chunks),
+            "provider": response.get("provider", "ai"),
+            "context": "pdf",
+        }
 
     if is_document_overview_question(question):
-        return with_retrieved_sources(local_overview_answer(question, chunks), chunks)
+        return {
+            "ok": True,
+            "answer": with_retrieved_sources(local_overview_answer(question, chunks), chunks),
+            "provider": "local",
+            "context": "pdf",
+        }
 
-    return with_retrieved_sources(local_grounded_answer(question, chunks), chunks)
+    return {
+        "ok": True,
+        "answer": with_retrieved_sources(local_grounded_answer(question, chunks), chunks),
+        "provider": "local",
+        "context": "pdf",
+    }
 
 
 def build_grounded_pdf_prompt(question: str, retrieved_context: str) -> str:
@@ -480,8 +499,7 @@ def answer_ai_tutor(question: str, use_pdf_context: bool = False) -> dict[str, A
         chunks = retrieve_ai_tutor_pdf_chunks(question)
         if not chunks:
             return {"ok": False, "answer": NOT_ENOUGH_INFORMATION, "provider": "local"}
-        answer = answer_from_retrieved_chunks(question, chunks)
-        return {"ok": True, "answer": answer, "provider": "grounded-pdf"}
+        return answer_from_retrieved_chunks_result(question, chunks)
 
     messages = list(st.session_state.ai_tutor_history)
     result = GeneralAIService().ask(messages, question, language=language)

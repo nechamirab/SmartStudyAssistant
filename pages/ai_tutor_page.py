@@ -58,7 +58,10 @@ def render_general_tutor() -> None:
         with st.chat_message("assistant"):
             st.write(result["answer"])
             if result["provider"] != "none":
-                st.caption(f"{t('provider')}: {result['provider']}")
+                provider_label = str(result["provider"])
+                if result.get("context") == "pdf":
+                    provider_label = f"{provider_label} with PDF context"
+                st.caption(f"{t('provider')}: {provider_label}")
         st.session_state.ai_tutor_history.extend(
             [{"role": "user", "content": prompt}, {"role": "assistant", "content": result["answer"]}]
         )
