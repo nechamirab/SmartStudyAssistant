@@ -10,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from pages.ai_tutor_page import render_ai_tutor
+from pages.auth_page import render_auth_page, render_auth_sidebar
 from pages.dashboard_page import render_dashboard
 from pages.final_exam_page import render_final_exam
 from pages.study_mode_page import render_study_mode
@@ -19,6 +20,7 @@ from ui.components import render_status_bar, render_top_nav
 from ui.navigation import NAV_ITEMS
 from ui.state import init_state
 from ui.styles import inject_custom_css
+from services.auth_service import AuthService
 from translations import t
 
 
@@ -36,6 +38,11 @@ def main() -> None:
     st.set_page_config(page_title=t("app_title"), page_icon=":books:", layout="wide")
     init_state()
     inject_custom_css()
+    if not AuthService().current_user():
+        render_auth_page()
+        return
+
+    render_auth_sidebar()
     render_top_nav()
     render_status_bar()
 

@@ -4,11 +4,18 @@ from dataclasses import dataclass
 
 import streamlit as st
 
+from services.auth_service import AuthService
+from services.database_service import DatabaseService
 from services.pdf_service import PdfExtractionError
 from services.study_service import StudyService
 from translations import current_language, t
 from ui.components import render_upload_hero
-from ui.workflow import extract_pdf, generate_study_plan_from_pending, pending_study_plan_signature
+from ui.workflow import (
+    extract_pdf,
+    generate_study_plan_from_pending,
+    load_saved_study_session,
+    pending_study_plan_signature,
+)
 
 
 @dataclass(frozen=True)
@@ -26,6 +33,7 @@ class StoredUploadedPdf:
 
 def render_upload() -> None:
     render_upload_hero()
+    render_saved_sessions()
     st.subheader(t("upload_pdf"))
     source_options = ["file", "folder"]
     saved_source = st.session_state.get("upload_source", "file")
@@ -51,6 +59,34 @@ def render_upload() -> None:
         render_folder_upload()
 
     render_pending_study_plan()
+
+
+def render_saved_sessions() -> None:
+    user = AuthService().current_user()
+    if not user:
+        return
+    try:
+        sessions = DatabaseService().list_study_sessions(int(user["id"]))
+    except Exception as exc:
+        st.warning(f"Could not load saved sessions: {exc}")
+        return
+
+    st.subheader("Continue Previous Study Session")
+    if not sessions:
+        st.caption("No saved sessions yet. Upload a PDF to create one.")
+        return
+
+    for item in sessions[:5]:
+        with st.container(border=True):
+            cols = st.columns([0.45, 0.2, 0.2, 0.15])
+            cols[0].markdown(f"**{item['filename']}**")
+            cols[0].caption(item["title"])
+            cols[1].metric("Progress", f"{item['progress_percent']}%")
+            cols[2].caption(f"Updated: {item['updated_at']}")
+            if cols[3].button("Continue", key=f"continue-session-{item['id']}"):
+                if load_saved_study_session(int(item["id"])):
+                    st.session_state.current_page = "Study Mode"
+                    st.rerun()
 
 
 def render_file_upload() -> None:
