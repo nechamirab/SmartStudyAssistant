@@ -19,6 +19,7 @@ Updated proposal documents:
 - [Project proposal outline](docs/project_proposal_outline.md)
 - [Hebrew project proposal](docs/project_proposal_he.md)
 - [AI prompting and data flow documentation](docs/AI_PROMPTING_AND_DATA_FLOW.md)
+- [Implementation changes summary](docs/IMPLEMENTATION_CHANGES_SUMMARY.md)
 
 ## Current MVP Features
 
