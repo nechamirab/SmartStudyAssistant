@@ -91,6 +91,35 @@ class ContextRetrievalService:
         return [chunk for _, _, chunk in scored[: max(1, int(top_k or 1))]]
 
     @staticmethod
+    def retrieve_overview_chunks(chunks: list[dict[str, Any]], top_k: int = 8) -> list[dict[str, Any]]:
+        selected: list[dict[str, Any]] = []
+        seen_sections: set[int] = set()
+
+        for chunk in chunks or []:
+            section_number = int(chunk.get("section_number", 0) or 0)
+            if section_number in seen_sections:
+                continue
+            if not str(chunk.get("text", "") or "").strip():
+                continue
+            overview_chunk = dict(chunk)
+            overview_chunk["score"] = 0
+            selected.append(overview_chunk)
+            seen_sections.add(section_number)
+            if len(selected) >= max(1, int(top_k or 1)):
+                return selected
+
+        for chunk in chunks or []:
+            if len(selected) >= max(1, int(top_k or 1)):
+                break
+            if not str(chunk.get("text", "") or "").strip():
+                continue
+            overview_chunk = dict(chunk)
+            overview_chunk["score"] = 0
+            selected.append(overview_chunk)
+
+        return selected
+
+    @staticmethod
     def format_chunks_for_prompt(chunks: list[dict[str, Any]], max_chars: int = 7000) -> str:
         parts: list[str] = []
         used = 0

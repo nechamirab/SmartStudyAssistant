@@ -245,6 +245,63 @@ def retrieve_pdf_chunks(question: str, top_k: int = 5) -> list[dict[str, Any]]:
     return ContextRetrievalService.retrieve_relevant_chunks(question, chunks, top_k=top_k, min_score=1)
 
 
+def retrieve_ai_tutor_pdf_chunks(question: str, top_k: int = 8) -> list[dict[str, Any]]:
+    if not has_pdf():
+        return []
+
+    chunks = ContextRetrievalService.build_chunks_from_pages(
+        st.session_state.pages,
+        st.session_state.sections,
+    )
+    retrieved = ContextRetrievalService.retrieve_relevant_chunks(question, chunks, top_k=top_k, min_score=1)
+    if retrieved:
+        return retrieved
+
+    if is_document_overview_question(question):
+        return ContextRetrievalService.retrieve_overview_chunks(chunks, top_k=top_k)
+
+    return []
+
+
+def is_document_overview_question(question: str) -> bool:
+    normalized = (question or "").lower()
+    compact = re.sub(r"\s+", " ", normalized).strip()
+    overview_phrases = [
+        "main idea",
+        "main ideas",
+        "main point",
+        "main points",
+        "key idea",
+        "key ideas",
+        "important idea",
+        "important ideas",
+        "big picture",
+        "overview",
+        "summarize",
+        "summary",
+        "what is this pdf about",
+        "what is the pdf about",
+        "from the pdf",
+        "from my material",
+        "study plan",
+        "practice question",
+        "practice questions",
+        "quiz me",
+        "prepare for",
+        "help me study",
+        "רעיונות מרכזיים",
+        "סכם",
+        "סיכום",
+        "מה הנושאים",
+        "מה הרעיונות",
+        "מהמסמך",
+        "מהחומר",
+        "תוכנית לימוד",
+        "שאלות תרגול",
+    ]
+    return any(phrase in compact for phrase in overview_phrases)
+
+
 def answer_from_retrieved_chunks(question: str, chunks: list[dict[str, Any]]) -> str:
     retrieved_context = ContextRetrievalService.format_chunks_for_prompt(chunks, max_chars=7000)
     if not retrieved_context:
@@ -259,6 +316,9 @@ def answer_from_retrieved_chunks(question: str, chunks: list[dict[str, Any]]) ->
     if response["ok"]:
         return with_retrieved_sources(response["answer"], chunks)
 
+    if is_document_overview_question(question):
+        return with_retrieved_sources(local_overview_answer(question, chunks), chunks)
+
     return with_retrieved_sources(local_grounded_answer(question, chunks), chunks)
 
 
@@ -270,6 +330,9 @@ def build_grounded_pdf_prompt(question: str, retrieved_context: str) -> str:
         "Do not guess.\n"
         "If the answer is not supported by the provided PDF context, reply exactly:\n"
         f"\"{NOT_ENOUGH_INFORMATION}\"\n"
+        "For document-wide questions such as summaries, main ideas, study plans, or practice questions, "
+        "synthesize only across the provided context sections.\n"
+        "If the user asks for a number of ideas or questions, return that number when the context supports it.\n"
         "When you answer, include a short source line using the provided section/page metadata.\n\n"
         f"Provided PDF context:\n{retrieved_context}\n\n"
         f"Question:\n{question}"
@@ -308,6 +371,42 @@ def local_grounded_answer(question: str, chunks: list[dict[str, Any]]) -> str:
     return f"{excerpt}\n\n{source_line(first_chunk)}"
 
 
+def local_overview_answer(question: str, chunks: list[dict[str, Any]]) -> str:
+    requested_count = requested_item_count(question, default=5)
+    ideas: list[str] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        title = str(chunk.get("section_title", "") or "Study section").strip()
+        text = " ".join(str(chunk.get("text", "") or "").split())
+        sentence = split_sentences(text)[:1]
+        detail = sentence[0] if sentence else text[:180].rstrip()
+        if not detail:
+            continue
+        idea = f"{title}: {detail}"
+        key = idea.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        ideas.append(idea)
+        if len(ideas) >= requested_count:
+            break
+
+    if not ideas:
+        return NOT_ENOUGH_INFORMATION
+
+    heading = "Main ideas from the uploaded PDF:"
+    if current_language() == "he":
+        heading = "הרעיונות המרכזיים מה-PDF שהועלה:"
+    return heading + "\n\n" + "\n".join(f"{index}. {idea}" for index, idea in enumerate(ideas, start=1))
+
+
+def requested_item_count(question: str, default: int = 5) -> int:
+    match = re.search(r"\b([1-9]|10)\b", question or "")
+    if not match:
+        return default
+    return max(1, min(10, int(match.group(1))))
+
+
 def split_sentences(text: str) -> list[str]:
     return [
         sentence.strip()
@@ -329,7 +428,7 @@ def source_line(chunk: dict[str, Any]) -> str:
 def answer_ai_tutor(question: str, use_pdf_context: bool = False) -> dict[str, Any]:
     language = current_language()
     if use_pdf_context and has_pdf():
-        chunks = retrieve_pdf_chunks(question)
+        chunks = retrieve_ai_tutor_pdf_chunks(question)
         if not chunks:
             return {"ok": False, "answer": NOT_ENOUGH_INFORMATION, "provider": "local"}
         answer = answer_from_retrieved_chunks(question, chunks)

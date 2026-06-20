@@ -105,7 +105,7 @@ Validation and fallback:
 | Feature | Explain the current study section for exam preparation. |
 | Main file | `ui/workflow.py` |
 | Function | `generate_explanation(section)` |
-| Provider wrapper | `GeneralAIService.ask()` |
+| Provider wrapper | `GeneralAIService.ask()` for non-PDF general chat; `GeneralAIService.complete()` for grounded PDF-context answers. |
 | UI caller | `pages/study_mode_page.py` |
 
 Data sent:
@@ -198,11 +198,11 @@ Data sent:
 | Data type | Sent? | Details |
 | --- | --- | --- |
 | User input | Yes | The chat input question is sent. |
-| Extracted PDF text | Optional | If "Use uploaded PDF context" is checked and a PDF exists, the app retrieves top relevant chunks locally and sends only those chunks. |
-| Section/session content | Optional | Grounded mode sends only retrieved section/page chunks with source metadata. General mode sends no PDF context. |
+| Extracted PDF text | Optional | If "Use uploaded PDF context" is checked and a PDF exists, `retrieve_ai_tutor_pdf_chunks()` first retrieves top relevant chunks locally. For broad requests such as summaries, main ideas, study plans, or practice questions, it falls back to representative chunks across sections. |
+| Section/session content | Optional | Grounded mode sends retrieved or representative section/page chunks with source metadata. General mode sends no PDF context. |
 | Metadata | Yes, if context enabled | Retrieved chunks include section number, section title, page, and text. |
 | Conversation history | General mode only | General tutor mode sends recent chat history through `GeneralAIService.ask()`. Grounded PDF mode does not send history. |
-| Full PDF text | No | The whole PDF is searched locally; the AI receives only the top relevant chunks. |
+| Full PDF text | No | The whole PDF is searched locally; the AI receives only selected chunks. Broad PDF-level questions receive representative chunks from multiple sections, not the full PDF. |
 | Private data | Possibly | Chat history, user question, and selected PDF context may leave the local app. |
 
 General system instruction:
@@ -217,7 +217,8 @@ For Hebrew mode, `tutor_language_instruction()` changes the instruction to answe
 Fallback:
 
 - If no provider is configured or the request fails, the UI returns a setup message explaining that `OPENAI_API_KEY` or `GROQ_API_KEY` is required.
-- The fallback suggests focused questions the user can ask after a provider is configured.
+- If PDF context is enabled and a broad PDF-level question has representative chunks, provider failure falls back to a local section-based overview built from selected PDF chunks.
+- If PDF context is enabled but no PDF text exists and no representative chunks can be built, the app returns the not-enough-information message.
 
 ### Quiz Generation
 

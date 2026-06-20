@@ -433,6 +433,41 @@ class TestMVPServices(unittest.TestCase):
 
         self.assertEqual(answer, workflow.NOT_ENOUGH_INFORMATION)
 
+    def test_ai_tutor_pdf_overview_uses_representative_context(self):
+        workflow = import_workflow_with_fake_streamlit()
+
+        sections = [
+            StudySection(1, "Section 1: BFS", 1, 1, 10, "Easy", "Graph traversal.", [], ["BFS"]),
+            StudySection(2, "Section 2: Gradient Descent", 2, 2, 10, "Medium", "Optimization.", [], ["Gradient"]),
+        ]
+        pages = [
+            DocumentPage(1, "BFS uses a queue to visit graph nodes level by level."),
+            DocumentPage(2, "Gradient descent updates model weights from a loss gradient."),
+        ]
+
+        class FakeSt:
+            session_state = FakeSessionState({
+                "pages": pages,
+                "sections": sections,
+                "language": "en",
+                "ai_tutor_history": [],
+            })
+
+        with patch.object(workflow, "st", FakeSt), patch.object(workflow, "has_pdf", return_value=True):
+            with patch.object(workflow, "GeneralAIService") as ai_service:
+                ai_service.return_value.complete.return_value = {
+                    "ok": True,
+                    "answer": "1. BFS uses a queue.\n2. Gradient descent updates weights.",
+                }
+                result = workflow.answer_ai_tutor("What are the main 5 ideas from the PDF?", use_pdf_context=True)
+
+        prompt = ai_service.return_value.complete.call_args.args[1]
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["provider"], "grounded-pdf")
+        self.assertIn("BFS uses a queue", prompt)
+        self.assertIn("Gradient descent updates", prompt)
+        self.assertNotEqual(result["answer"], workflow.NOT_ENOUGH_INFORMATION)
+
     def test_user_registration_creates_user(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = DatabaseService(Path(tmpdir) / "test.db")
