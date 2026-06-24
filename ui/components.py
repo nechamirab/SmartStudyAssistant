@@ -7,8 +7,8 @@ import streamlit as st
 from services.study_service import StudySection
 from translations import SUPPORTED_LANGUAGES, t
 from ui.navigation import NAV_ITEMS, NAV_TRANSLATION_KEYS
-from ui.state import has_pdf, overall_progress
-
+from services.auth_service import AuthService
+from ui.state import has_pdf, overall_progress, reset_active_study_state
 
 def card(title: str, body: str, extra: str = "") -> None:
     st.markdown(
@@ -42,9 +42,24 @@ def badge(text: str, kind: str = "primary") -> str:
 def render_top_nav() -> None:
     with st.container(border=True):
         st.markdown('<div class="top-nav">', unsafe_allow_html=True)
-        header_columns = st.columns([3.5, 1.25])
+        header_columns = st.columns([4, 1.25])
         with header_columns[0]:
-            st.markdown(f'<div class="brand">{html.escape(t("app_title"))}</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="brand">{html.escape(t("app_title"))}</div>',
+                unsafe_allow_html=True
+            )
+            user = AuthService().current_user()
+            if user:
+                account_cols = st.columns([0.4, 1.0, 3])
+                with account_cols[0]:
+                    st.caption(f"👤 {user['username']}")
+                with account_cols[1]:
+                    if st.button("Logout", key="logout-btn"):
+                        AuthService().logout_user()
+                        reset_active_study_state()
+                        st.session_state.active_auth_user_id = None
+                        st.session_state.sqlite_autoload_user_id = None
+                        st.rerun()
         with header_columns[1]:
             st.selectbox(
                 t("language"),
