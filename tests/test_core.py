@@ -109,6 +109,9 @@ class TestMVPServices(unittest.TestCase):
         self.assertEqual(sections[0].summary, "Understand breadth first search and graph exploration order.")
         self.assertEqual(sections[0].key_concepts, ["Breadth First Search", "Graph Exploration"])
         self.assertEqual(sections[0].difficulty, "Medium")
+        self.assertNotEqual(sections[0].estimated_minutes, 18)
+        self.assertTrue(sections[0].time_explanation)
+        self.assertEqual(sections[0].estimated_minutes, sections[0].time_breakdown["estimated_minutes"])
 
     def test_malformed_ai_study_plan_falls_back_to_heuristic(self):
         pages = [
@@ -131,17 +134,44 @@ class TestMVPServices(unittest.TestCase):
 
         self.assertEqual(sections, [])
 
-    def test_session_suggestion_uses_text_size(self):
-        self.assertEqual(StudyService.suggest_session_count("word " * 1000), 3)
-        self.assertEqual(StudyService.suggest_session_count("word " * 2000), 5)
-        self.assertEqual(StudyService.suggest_session_count("word " * 4500), 7)
-        self.assertEqual(StudyService.suggest_session_count("word " * 8000), 10)
-        self.assertEqual(StudyService.suggest_session_count("word " * 12000), 12)
-        self.assertEqual(StudyService.suggest_session_count("word " * 18000), 15)
+    def test_estimate_section_minutes_returns_reasonable_time_for_short_text(self):
+        estimate = StudyService.estimate_section_minutes("Short readable section text.", difficulty="Easy")
+
+        self.assertEqual(estimate["estimated_minutes"], 8)
+        self.assertEqual(estimate["word_count"], 4)
+        self.assertIn("Estimated", estimate["explanation"])
+
+    def test_estimate_section_minutes_increases_with_key_concepts(self):
+        text = " ".join(["learning"] * 800)
+
+        without_concepts = StudyService.estimate_section_minutes(text, [], [], "Easy")
+        with_concepts = StudyService.estimate_section_minutes(
+            text,
+            ["Concept 1", "Concept 2", "Concept 3", "Concept 4"],
+            [],
+            "Easy",
+        )
+
+        self.assertGreater(with_concepts["estimated_minutes"], without_concepts["estimated_minutes"])
+
+    def test_hard_difficulty_has_higher_estimate_than_easy(self):
+        text = " ".join(["optimization"] * 800)
+
+        easy = StudyService.estimate_section_minutes(text, [], [], "Easy")
+        hard = StudyService.estimate_section_minutes(text, [], [], "Hard")
+
+        self.assertGreater(hard["estimated_minutes"], easy["estimated_minutes"])
+
+    def test_session_suggestion_uses_total_workload(self):
+        self.assertEqual(StudyService.suggest_session_count_from_size(45), 2)
+        self.assertEqual(StudyService.suggest_session_count_from_size(90), 3)
+        self.assertEqual(StudyService.suggest_session_count_from_size(150), 5)
+        self.assertEqual(StudyService.suggest_session_count_from_size(150, page_count=2), 2)
+        self.assertLessEqual(StudyService.suggest_session_count_from_size(1000), 15)
 
     def test_empty_text_returns_default_session_suggestion(self):
-        self.assertEqual(StudyService.suggest_session_count(""), 5)
-        self.assertEqual(StudyService.suggest_session_count([DocumentPage(page_number=1, text="")]), 5)
+        self.assertEqual(StudyService.suggest_session_count(""), 1)
+        self.assertEqual(StudyService.suggest_session_count([DocumentPage(page_number=1, text="")]), 1)
 
     def test_manual_session_number_overrides_suggestion(self):
         pages = [
@@ -166,6 +196,39 @@ class TestMVPServices(unittest.TestCase):
 
         self.assertEqual(len(sections), 2)
         self.assertEqual([section.start_page for section in sections], [1, 3])
+
+    def test_fallback_sectioning_balances_by_workload(self):
+        pages = [
+            DocumentPage(page_number=1, text=" ".join(["dense"] * 1200)),
+            DocumentPage(page_number=2, text=" ".join(["light"] * 50)),
+            DocumentPage(page_number=3, text=" ".join(["light"] * 50)),
+            DocumentPage(page_number=4, text=" ".join(["light"] * 50)),
+            DocumentPage(page_number=5, text=" ".join(["light"] * 50)),
+        ]
+
+        with patch("services.study_service.GeneralAIService") as ai_service:
+            ai_service.return_value.complete.return_value = {"ok": False, "answer": ""}
+            sections = StudyService().generate_study_plan_for_sessions(pages, session_count=2)
+
+        self.assertEqual(len(sections), 2)
+        self.assertEqual(sections[0].start_page, 1)
+        self.assertEqual(sections[0].end_page, 1)
+        self.assertEqual(sections[1].start_page, 2)
+
+    def test_tiny_last_section_is_avoided(self):
+        pages = [
+            DocumentPage(page_number=1, text=" ".join(["topic"] * 1000)),
+            DocumentPage(page_number=2, text=" ".join(["topic"] * 1000)),
+            DocumentPage(page_number=3, text="tiny tail"),
+        ]
+
+        with patch("services.study_service.GeneralAIService") as ai_service:
+            ai_service.return_value.complete.return_value = {"ok": False, "answer": ""}
+            sections = StudyService().generate_study_plan_for_sessions(pages, session_count=3)
+
+        self.assertEqual(len(sections), 2)
+        self.assertEqual(sections[-1].start_page, 2)
+        self.assertEqual(sections[-1].end_page, 3)
 
     def test_section_state_is_independent_per_section(self):
         states = SectionStateService.ensure_states({}, [1, 2])
@@ -317,6 +380,102 @@ class TestMVPServices(unittest.TestCase):
 
         self.assertEqual(results[0]["section_number"], 1)
         self.assertIn("BFS", results[0]["text"])
+
+    def test_retrieve_relevant_chunks_finds_gradient_descent(self):
+        chunks = [
+            {
+                "section_number": 1,
+                "section_title": "Breadth First Search",
+                "start_page": 1,
+                "end_page": 1,
+                "page": 1,
+                "text": "BFS explores graph nodes level by level using a queue.",
+                "key_concepts": ["BFS", "Queue"],
+            },
+            {
+                "section_number": 2,
+                "section_title": "Gradient Descent",
+                "start_page": 2,
+                "end_page": 2,
+                "page": 2,
+                "text": "Gradient descent updates model weights by following the negative gradient.",
+                "key_concepts": ["Optimization", "Gradient Descent"],
+            },
+        ]
+
+        results = ContextRetrievalService.retrieve_relevant_chunks("Explain gradient descent", chunks)
+
+        self.assertEqual(results[0]["section_number"], 2)
+        self.assertIn("gradient", results[0]["matched_meaningful_tokens"])
+        self.assertIn("descent", results[0]["matched_meaningful_tokens"])
+        self.assertIn("gradient descent", results[0]["phrase_matches"])
+        self.assertGreaterEqual(results[0]["score"], results[0]["threshold_used"])
+
+    def test_noisy_gradient_descent_query_keeps_top_result(self):
+        chunks = [
+            {
+                "section_number": 1,
+                "section_title": "Breadth First Search",
+                "start_page": 1,
+                "end_page": 1,
+                "page": 1,
+                "text": "BFS explores graph nodes level by level using a queue.",
+                "key_concepts": ["BFS", "Queue"],
+            },
+            {
+                "section_number": 2,
+                "section_title": "Gradient Descent",
+                "start_page": 2,
+                "end_page": 2,
+                "page": 2,
+                "text": "Gradient descent updates model weights by following the negative gradient.",
+                "key_concepts": ["Optimization", "Gradient Descent"],
+            },
+        ]
+
+        clean = ContextRetrievalService.retrieve_relevant_chunks("Explain gradient descent", chunks)
+        noisy = ContextRetrievalService.retrieve_relevant_chunks("Explain gradient descent banana", chunks)
+        polite = ContextRetrievalService.retrieve_relevant_chunks("Explain gradient descent please", chunks)
+
+        self.assertEqual(clean[0]["section_number"], 2)
+        self.assertEqual(noisy[0]["section_number"], clean[0]["section_number"])
+        self.assertEqual(polite[0]["section_number"], clean[0]["section_number"])
+        self.assertIn("banana", noisy[0]["unmatched_query_tokens"])
+        self.assertIn("please", polite[0]["ignored_query_tokens"])
+
+    def test_random_query_returns_no_chunks(self):
+        chunks = [
+            {
+                "section_number": 2,
+                "section_title": "Gradient Descent",
+                "start_page": 2,
+                "end_page": 2,
+                "page": 2,
+                "text": "Gradient descent updates model weights by following the negative gradient.",
+                "key_concepts": ["Optimization", "Gradient Descent"],
+            }
+        ]
+
+        results = ContextRetrievalService.retrieve_relevant_chunks("banana apple randomword", chunks)
+
+        self.assertEqual(results, [])
+
+    def test_stopword_only_query_returns_no_chunks(self):
+        chunks = [
+            {
+                "section_number": 2,
+                "section_title": "Gradient Descent",
+                "start_page": 2,
+                "end_page": 2,
+                "page": 2,
+                "text": "Gradient descent updates model weights by following the negative gradient.",
+                "key_concepts": ["Optimization", "Gradient Descent"],
+            }
+        ]
+
+        results = ContextRetrievalService.retrieve_relevant_chunks("what is the please explain", chunks)
+
+        self.assertEqual(results, [])
 
     def test_retrieve_relevant_chunks_returns_empty_for_unrelated_question(self):
         chunks = [
@@ -517,6 +676,24 @@ class TestMVPServices(unittest.TestCase):
             answer = workflow.answer_section_question(sections[0], "What is photosynthesis?")
 
         self.assertEqual(answer, workflow.NOT_ENOUGH_INFORMATION)
+
+    def test_pdf_chunk_retrieval_does_not_return_arbitrary_fallback(self):
+        workflow = import_workflow_with_fake_streamlit()
+
+        sections = [StudySection(1, "Section 1: BFS", 1, 1, 10, "Easy", "Graph traversal.", [], ["BFS"])]
+        pages = [DocumentPage(1, "BFS uses a queue to visit graph nodes level by level.")]
+
+        class FakeSt:
+            session_state = FakeSessionState({
+                "pages": pages,
+                "sections": sections,
+                "language": "en",
+            })
+
+        with patch.object(workflow, "st", FakeSt), patch.object(workflow, "has_pdf", return_value=True):
+            chunks = workflow.retrieve_pdf_chunks("What is photosynthesis?")
+
+        self.assertEqual(chunks, [])
 
     def test_chapter_summary_does_not_return_not_found_when_section_exists(self):
         workflow = import_workflow_with_fake_streamlit()

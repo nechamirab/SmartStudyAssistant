@@ -533,8 +533,8 @@ Grounded answer:
 3. `PdfService.extract_pages()` extracts per-page text with PyMuPDF and falls back to `pypdf` if needed.
 4. The temporary file is deleted after extraction.
 5. Extracted pages are stored in `st.session_state.pending_pages`.
-6. `StudyService.suggest_session_count()` estimates a session count from readable text size.
-7. `StudyService.generate_study_plan_for_sessions()` constructs a study-plan prompt from truncated page text.
+6. `StudyService.suggest_session_count()` estimates a session count from deterministic total study workload.
+7. `StudyService.generate_study_plan_for_sessions()` constructs a study-plan prompt from truncated page text, then recalculates section time locally from actual section text.
 8. `GeneralAIService.complete()` sends the study-plan system prompt and user prompt to OpenAI or Groq.
 9. The response is parsed and validated as JSON. If invalid, a local heuristic study plan is generated.
 10. When the user confirms the study plan, pages, sections, progress, and interaction state are moved into active session state and persisted locally.

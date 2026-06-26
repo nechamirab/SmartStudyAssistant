@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
+from math import log
 from typing import Any
 
 
@@ -26,7 +28,11 @@ class ContextRetrievalService:
         "that", "the", "their", "there", "these", "this", "those", "to",
         "was", "were", "what", "when", "where", "which", "why", "with",
         "would", "explain", "describe", "define", "tell", "about",
+        "give", "me", "please", "show", "using", "use",
     }
+    BM25_K1 = 1.5
+    BM25_B = 0.75
+    DEFAULT_SCORE_THRESHOLD = 1.0
 
     @classmethod
     def detect_query_intent(cls, question: str) -> dict[str, Any]:
@@ -122,44 +128,245 @@ class ContextRetrievalService:
         min_score: int = 1,
     ) -> list[dict[str, Any]]:
         intent = cls.detect_query_intent(question)
-        query_tokens = cls._expanded_tokens(question)
-        if not query_tokens:
+        query = cls._analyze_query(question)
+        if not query["terms"]:
             return []
 
-        scored: list[tuple[int, int, dict[str, Any]]] = []
-        for index, chunk in enumerate(chunks or []):
-            text_tokens = cls._expanded_tokens(str(chunk.get("text", "")))
-            title_tokens = cls._expanded_tokens(str(chunk.get("section_title", "")))
-            concept_tokens = cls._expanded_tokens(" ".join(str(item) for item in chunk.get("key_concepts", []) or []))
+        indexed_chunks = cls._build_retrieval_index(chunks or [])
+        if not indexed_chunks:
+            return []
 
-            overlap = len(query_tokens & text_tokens)
-            title_overlap = len(query_tokens & title_tokens)
-            concept_overlap = len(query_tokens & concept_tokens)
-            score = overlap + (title_overlap * 3) + (concept_overlap * 2)
-            reasons: list[str] = []
-            if overlap:
-                reasons.append("text overlap")
-            if title_overlap:
-                reasons.append("title overlap")
-            if concept_overlap:
-                reasons.append("key concept overlap")
+        threshold = max(cls.DEFAULT_SCORE_THRESHOLD, float(min_score or 0))
+        idf = cls._idf_by_term(indexed_chunks)
+        avgdl = sum(max(1, item["text_length"]) for item in indexed_chunks) / max(1, len(indexed_chunks))
 
-            section_number = int(chunk.get("section_number", 0) or 0)
-            if section_number and section_number in intent.get("section_numbers", []):
-                score += 10
-                reasons.append("requested section number")
-            if section_number and section_number in intent.get("chapter_numbers", []):
-                score += 8
-                reasons.append("requested chapter mapped to section")
+        scored: list[tuple[float, int, dict[str, Any]]] = []
+        for index, item in enumerate(indexed_chunks):
+            chunk = item["chunk"]
+            score, diagnostics = cls._score_chunk(
+                chunk=item,
+                query=query,
+                idf=idf,
+                avgdl=avgdl,
+                intent=intent,
+                threshold=threshold,
+            )
 
-            if score >= min_score:
-                ranked_chunk = dict(chunk)
-                ranked_chunk["score"] = score
-                ranked_chunk["match_reason"] = ", ".join(reasons) or "metadata match"
-                scored.append((score, index, ranked_chunk))
+            if not diagnostics["accepted"]:
+                continue
+
+            ranked_chunk = dict(chunk)
+            ranked_chunk["score"] = round(score, 4)
+            ranked_chunk["matched_meaningful_tokens"] = diagnostics["matched_meaningful_tokens"]
+            ranked_chunk["unmatched_query_tokens"] = diagnostics["unmatched_query_tokens"]
+            ranked_chunk["ignored_query_tokens"] = diagnostics["ignored_query_tokens"]
+            ranked_chunk["phrase_matches"] = diagnostics["phrase_matches"]
+            ranked_chunk["threshold_used"] = threshold
+            ranked_chunk["passed_by"] = diagnostics["passed_by"]
+            ranked_chunk["match_reason"] = ", ".join(diagnostics["passed_by"]) or "lexical match"
+            scored.append((score, index, ranked_chunk))
 
         scored.sort(key=lambda item: (-item[0], item[1]))
         return [chunk for _, _, chunk in scored[: max(1, int(top_k or 1))]]
+
+    @classmethod
+    def _analyze_query(cls, question: str) -> dict[str, Any]:
+        raw_tokens = [
+            token
+            for token in re.findall(r"[a-z0-9\u0590-\u05ff]+", (question or "").lower())
+            if len(token) > 1
+        ]
+        meaningful_tokens = cls._token_list(question)
+        ignored_tokens = [token for token in raw_tokens if token not in meaningful_tokens]
+        terms: set[str] = set()
+        term_variants_by_token: dict[str, set[str]] = {}
+
+        for token in meaningful_tokens:
+            variants = cls._lexical_variants(token)
+            term_variants_by_token[token] = variants
+            terms.update(variants)
+
+        return {
+            "meaningful_tokens": meaningful_tokens,
+            "ignored_tokens": sorted(dict.fromkeys(ignored_tokens)),
+            "terms": terms,
+            "term_variants_by_token": term_variants_by_token,
+            "phrases": cls._query_phrases(meaningful_tokens),
+        }
+
+    @classmethod
+    def _build_retrieval_index(cls, chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        indexed: list[dict[str, Any]] = []
+        for chunk in chunks:
+            text_tokens = cls._index_token_list(str(chunk.get("text", "") or ""))
+            title_tokens = cls._index_token_list(str(chunk.get("section_title", "") or ""))
+            concept_tokens = cls._index_token_list(" ".join(str(item) for item in chunk.get("key_concepts", []) or []))
+            indexed.append(
+                {
+                    "chunk": chunk,
+                    "text_counts": Counter(text_tokens),
+                    "title_counts": Counter(title_tokens),
+                    "concept_counts": Counter(concept_tokens),
+                    "all_terms": set(text_tokens) | set(title_tokens) | set(concept_tokens),
+                    "text_length": len(text_tokens),
+                    "normalized_text": " ".join(cls._token_list(str(chunk.get("text", "") or ""))),
+                    "normalized_title": " ".join(cls._token_list(str(chunk.get("section_title", "") or ""))),
+                    "normalized_concepts": " ".join(
+                        cls._token_list(" ".join(str(item) for item in chunk.get("key_concepts", []) or []))
+                    ),
+                }
+            )
+        return indexed
+
+    @staticmethod
+    def _idf_by_term(indexed_chunks: list[dict[str, Any]]) -> dict[str, float]:
+        document_count = max(1, len(indexed_chunks))
+        document_frequency: Counter[str] = Counter()
+        for item in indexed_chunks:
+            document_frequency.update(item["all_terms"])
+        return {
+            term: log(1 + (document_count - frequency + 0.5) / (frequency + 0.5))
+            for term, frequency in document_frequency.items()
+        }
+
+    @classmethod
+    def _score_chunk(
+        cls,
+        chunk: dict[str, Any],
+        query: dict[str, Any],
+        idf: dict[str, float],
+        avgdl: float,
+        intent: dict[str, Any],
+        threshold: float,
+    ) -> tuple[float, dict[str, Any]]:
+        score = 0.0
+        matched_terms: set[str] = set()
+        passed_by: list[str] = []
+
+        for term in query["terms"]:
+            text_tf = int(chunk["text_counts"].get(term, 0))
+            title_tf = int(chunk["title_counts"].get(term, 0))
+            concept_tf = int(chunk["concept_counts"].get(term, 0))
+            if not text_tf and not title_tf and not concept_tf:
+                continue
+
+            weight = max(0.1, idf.get(term, 0.1))
+            if text_tf:
+                score += cls._bm25_term_score(text_tf, chunk["text_length"], avgdl, weight)
+            if title_tf:
+                score += weight * 2.5
+            if concept_tf:
+                score += weight * 2.0
+            matched_terms.add(term)
+
+        phrase_matches = cls._phrase_matches(query["phrases"], chunk)
+        if phrase_matches:
+            for phrase in phrase_matches:
+                phrase_terms = phrase.split()
+                score += sum(max(0.1, idf.get(term, 0.1)) for term in phrase_terms) * 3.0
+                matched_terms.update(phrase_terms)
+            passed_by.append("phrase boost")
+
+        section_number = int(chunk["chunk"].get("section_number", 0) or 0)
+        metadata_match = False
+        if section_number and section_number in intent.get("section_numbers", []):
+            score += 10.0
+            metadata_match = True
+            passed_by.append("requested section number")
+        if section_number and section_number in intent.get("chapter_numbers", []):
+            score += 8.0
+            metadata_match = True
+            passed_by.append("requested chapter mapped to section")
+
+        matched_meaningful_tokens = cls._matched_meaningful_tokens(query, matched_terms)
+        unmatched_query_tokens = [
+            token
+            for token in query["meaningful_tokens"]
+            if token not in matched_meaningful_tokens
+        ]
+
+        enough_terms = cls._has_enough_term_evidence(
+            meaningful_tokens=query["meaningful_tokens"],
+            matched_meaningful_tokens=matched_meaningful_tokens,
+            score=score,
+            threshold=threshold,
+            phrase_matches=phrase_matches,
+            metadata_match=metadata_match,
+        )
+        accepted = score >= threshold and enough_terms
+        if accepted and "phrase boost" not in passed_by and not metadata_match:
+            passed_by.append("bm25 score")
+
+        return score, {
+            "accepted": accepted,
+            "matched_meaningful_tokens": matched_meaningful_tokens,
+            "unmatched_query_tokens": unmatched_query_tokens,
+            "ignored_query_tokens": query["ignored_tokens"],
+            "phrase_matches": phrase_matches,
+            "passed_by": passed_by,
+        }
+
+    @classmethod
+    def _bm25_term_score(cls, term_frequency: int, document_length: int, avgdl: float, idf: float) -> float:
+        normalized_length = cls.BM25_K1 * (
+            1 - cls.BM25_B + cls.BM25_B * (max(1, document_length) / max(1.0, avgdl))
+        )
+        return idf * ((term_frequency * (cls.BM25_K1 + 1)) / (term_frequency + normalized_length))
+
+    @classmethod
+    def _matched_meaningful_tokens(cls, query: dict[str, Any], matched_terms: set[str]) -> list[str]:
+        matched: list[str] = []
+        for token in query["meaningful_tokens"]:
+            variants = query["term_variants_by_token"].get(token, {token})
+            if variants & matched_terms:
+                matched.append(token)
+        return matched
+
+    @staticmethod
+    def _has_enough_term_evidence(
+        meaningful_tokens: list[str],
+        matched_meaningful_tokens: list[str],
+        score: float,
+        threshold: float,
+        phrase_matches: list[str],
+        metadata_match: bool,
+    ) -> bool:
+        if metadata_match:
+            return True
+        if not meaningful_tokens or not matched_meaningful_tokens:
+            return False
+        if phrase_matches:
+            return True
+        if len(matched_meaningful_tokens) >= 2:
+            return True
+        if len(meaningful_tokens) == 1:
+            return score >= threshold
+        return score >= max(threshold * 2.5, 2.5)
+
+    @staticmethod
+    def _phrase_matches(phrases: list[str], chunk: dict[str, Any]) -> list[str]:
+        haystacks = [
+            chunk["normalized_text"],
+            chunk["normalized_title"],
+            chunk["normalized_concepts"],
+        ]
+        matches: list[str] = []
+        for phrase in phrases:
+            phrase_pattern = f" {phrase} "
+            if any(phrase_pattern in f" {haystack} " for haystack in haystacks):
+                matches.append(phrase)
+        return matches
+
+    @staticmethod
+    def _query_phrases(tokens: list[str]) -> list[str]:
+        phrases: list[str] = []
+        for size in range(min(4, len(tokens)), 1, -1):
+            for index in range(0, len(tokens) - size + 1):
+                phrase_tokens = tokens[index : index + size]
+                if any(token.isdigit() for token in phrase_tokens):
+                    continue
+                phrases.append(" ".join(phrase_tokens))
+        return phrases
 
     @staticmethod
     def retrieve_overview_chunks(chunks: list[dict[str, Any]], top_k: int = 8) -> list[dict[str, Any]]:
@@ -401,12 +608,38 @@ class ContextRetrievalService:
         return labels
 
     @classmethod
-    def _tokens(cls, value: str) -> set[str]:
-        return {
+    def _token_list(cls, value: str) -> list[str]:
+        return [
             token
             for token in re.findall(r"[a-z0-9\u0590-\u05ff]+", (value or "").lower())
             if len(token) > 1 and token not in cls.STOP_WORDS
-        }
+        ]
+
+    @classmethod
+    def _index_token_list(cls, value: str) -> list[str]:
+        tokens: list[str] = []
+        for token in cls._token_list(value):
+            tokens.extend(sorted(cls._lexical_variants(token)))
+        return tokens
+
+    @classmethod
+    def _lexical_variants(cls, token: str) -> set[str]:
+        variants = {token}
+        if token.endswith("s") and len(token) > 3:
+            variants.add(token[:-1])
+        elif len(token) > 2 and re.fullmatch(r"[a-z]+", token):
+            variants.add(token + "s")
+        if token in cls.NUMBER_WORDS:
+            variants.add(str(cls.NUMBER_WORDS[token]))
+        elif token.isdigit():
+            for word, number in cls.NUMBER_WORDS.items():
+                if number == int(token):
+                    variants.add(word)
+        return variants
+
+    @classmethod
+    def _tokens(cls, value: str) -> set[str]:
+        return set(cls._token_list(value))
 
     @classmethod
     def _expanded_tokens(cls, value: str) -> set[str]:

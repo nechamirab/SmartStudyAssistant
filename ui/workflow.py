@@ -274,6 +274,14 @@ def question_language(question: str, default_language: str) -> str:
     return default_language
 
 def answer_section_question(section: StudySection, question: str) -> str:
+    intent = ContextRetrievalService.detect_query_intent(question)
+    if intent["intent"] == "chapter_summary":
+        return answer_chapter_summary_result(question, intent)["answer"]
+    if intent["intent"] == "section_summary":
+        return answer_study_section_summary_result(question, intent)["answer"]
+    if intent["intent"] == "study_plan":
+        return answer_study_plan_result(question)["answer"]
+
     chunks = retrieve_current_section_chunks(question, section)
 
     if not chunks:
@@ -301,15 +309,7 @@ def retrieve_pdf_chunks(question: str, top_k: int = 5) -> list[dict[str, Any]]:
         min_score=1,
     )
 
-    if retrieved:
-        return retrieved
-
-    return ContextRetrievalService.retrieve_relevant_chunks(
-        question,
-        chunks,
-        top_k=top_k,
-        min_score=0,
-    )
+    return retrieved
 
 def retrieve_ai_tutor_pdf_chunks(question: str, top_k: int = 8) -> list[dict[str, Any]]:
     if not has_pdf():
@@ -373,6 +373,9 @@ def retrieve_current_section_chunks(
         top_k=top_k,
         min_score=1,
     )
+
+    if not retrieved:
+        return []
 
     if len(retrieved) >= 3:
         return retrieved

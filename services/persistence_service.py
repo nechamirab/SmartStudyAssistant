@@ -95,6 +95,10 @@ class PersistenceService:
                     summary=str(item.get("summary", "")),
                     learning_objectives=list(item.get("learning_objectives") or []),
                     key_concepts=list(item.get("key_concepts") or []),
+                    time_explanation=str(item.get("time_explanation", "")),
+                    time_breakdown=dict(item.get("time_breakdown", {}) or {}),
+                    word_count=int(item.get("word_count", 0) or 0),
+                    workload_score=float(item.get("workload_score", 0.0) or 0.0),
                 )
             )
         return sections

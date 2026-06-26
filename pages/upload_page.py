@@ -184,9 +184,9 @@ def render_pending_study_plan() -> None:
         max_sessions = 15
         selected = st.number_input(
             t("number_of_study_sessions"),
-            min_value=3,
+            min_value=1,
             max_value=max_sessions,
-            value=max(3, min(max_sessions, int(st.session_state.selected_session_count or suggested or 5))),
+            value=max(1, min(max_sessions, int(st.session_state.selected_session_count or suggested or 1))),
             help=t("session_count_help"),
         )
         st.session_state.selected_session_count = int(selected)

@@ -12,7 +12,7 @@
 - **PDF extraction:** `services/pdf_service.py` extracts text with PyMuPDF first and falls back to `pypdf`.
 - **PDF rendering/download:** `services/pdf_render_service.py` renders selected pages to PNG bytes; `services/pdf_section_service.py` extracts a section PDF for download.
 - **Study plan generation:** `services/study_service.py` creates `StudySection` objects with title, page range, estimated minutes, difficulty, summary, learning objectives, and key concepts.
-- **Configurable sessions:** `StudyService.suggest_session_count(...)` suggests 3-15 sessions based mainly on word count and page count; Upload lets the user override the number before generating the plan.
+- **Configurable sessions:** `StudyService.suggest_session_count(...)` suggests sessions from estimated learning workload; Upload lets the user override the number before generating the plan.
 - **Study Mode:** supports rendered PDF pages, extracted-text fallback, timer, per-section explanation, quiz, and question answering.
 - **Per-section state:** `services/section_state_service.py` prevents section quizzes, explanations, answers, and scores from overwriting each other.
 - **AI Tutor:** `services/general_ai_service.py` selects OpenAI first, Groq second, and provides clear fallback if no key exists. `pages/ai_tutor_page.py` has general tutor mode and current-section mode.

@@ -53,6 +53,7 @@ def render_study_plan() -> None:
         objectives = "".join(
             f"<li>{html.escape(objective)}</li>" for objective in getattr(section, "learning_objectives", [])[:5]
         )
+        time_explanation = getattr(section, "time_explanation", "") or "Based on reading time, concepts, and practice."
         body = (
             f"{badge(page_label(section), 'accent')}"
             f"{badge(t('difficulty_' + section.difficulty.lower()) if section.difficulty.lower() in {'easy', 'medium', 'hard'} else section.difficulty, 'warning')}"
@@ -62,6 +63,7 @@ def render_study_plan() -> None:
             f"<ul class='objective-list'>{objectives}</ul>"
             f"<div>{concepts}</div>"
             f"<p class='muted'>{html.escape(t('estimated_time'))}: {section.estimated_minutes} {html.escape(t('minutes'))}</p>"
+            f"<p class='muted'>{html.escape(time_explanation)}</p>"
         )
         roadmap_card(section, body)
         if st.button(t("start_studying"), key=f"start-section-{section.section_number}"):
